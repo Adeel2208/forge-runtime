@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      # No services, no network, no API keys. The suite runs entirely on
+      # MockProvider and SQLite - see ADR-0003 and ADR-0004.
+      - name: Test
+        run: pytest -q
+
+      - name: Lint
+        run: ruff check forge tests scripts
+
+      - name: Type-check
+        run: mypy forge
+
+      - name: Benchmark (proves the report is reproducible)
+        run: |
+          python -m forge.cli bench --trials 1 --out reports/ci
+          cat reports/ci/failure_injection.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assert zero duplicate effects
+        run: |
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("reports/ci/failure_injection.json"))
+          bad = {k: v["duplicate_effects"]
+                 for k, v in data["summary"].items() if v["duplicate_effects"]}
+          if bad:
+              sys.exit(f"duplicate external effects detected: {bad}")
+          spend = sum(v["usd"] for v in data["summary"].values())
+          if spend > 0:
+              sys.exit(f"benchmark spent money: ${spend}")
+          print("0 duplicate effects, $0.00 spent")
+          PY

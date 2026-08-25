@@ -1,0 +1,58 @@
+# The default policy bundle: FORGE runs at exactly $0.00.
+#
+# This is not a note-to-self about being frugal. `usd_ceiling: 0.00` is checked
+# at AUTHORIZE, and any provider whose pricing is non-zero requires the
+# PAID_INFERENCE capability - which is not granted. Spending money therefore
+# requires a deliberate, logged, human-approved policy change.
+#
+# See docs/adr/0003-cost-is-a-capability.md
+version: zero-cost/1.0.0
+
+budget:
+  usd_ceiling: 0.00          # hard stop, not a warning
+  tokens_per_run: 250000
+  wall_clock_seconds: 1800
+  max_steps: 24
+  max_tool_calls: 32
+
+capabilities:
+
+  # -- inference tiers -------------------------------------------------------
+  FREE_TIER_INFERENCE:
+    granted: true
+    allowed_effects: [READ]
+
+  PAID_INFERENCE:
+    granted: false           # any adapter with price_per_1k > 0 is denied
+    requires_approval: true
+    allowed_effects: [READ]
+
+  # -- tool capabilities -----------------------------------------------------
+  KNOWLEDGE_READ:
+    granted: true
+    allowed_effects: [READ]
+
+  CALC:
+    granted: true
+    allowed_effects: [READ]
+
+  WORKSPACE_WRITE:
+    granted: true
+    max_invocations: 8
+    allowed_effects: [READ, REVERSIBLE_WRITE]
+
+  # Present but ungranted on purpose: the adversarial tests assert that a
+  # declared-but-ungranted capability is refused just as firmly as an
+  # undeclared one, and the demo uses it to show a live policy denial.
+  EXTERNAL_PUBLISH:
+    granted: false
+    requires_approval: true
+    allowed_effects: [IRREVERSIBLE_WRITE]
+
+require_approval_for:
+  - IRREVERSIBLE_WRITE
+
+on_denial:
+  action: fallback
+  order: [ollama, mock]
+  log: policy_decision

@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# FORGE runtime state - event stores are per-machine, never committed
+.forge/
+*.db
+*.db-wal
+*.db-shm
+
+# Benchmark output is committed deliberately (see reports/), but scratch is not
+reports/scratch/
