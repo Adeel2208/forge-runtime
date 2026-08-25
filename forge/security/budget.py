@@ -16,13 +16,20 @@ __all__ = ["Budget"]
 
 @dataclass
 class Budget:
-    """Per-run ceilings. Defaults are deliberately conservative."""
+    """Per-run resource ceilings.
+
+    Defaults are deliberately conservative: an agent that misbehaves should hit
+    a wall quickly and cheaply. Raise them per task, per tenant or per policy
+    bundle - but a run always executes against explicit, finite limits.
+    """
 
     max_steps: int = 24
     max_tool_calls: int = 32
     max_tokens: int = 250_000
     max_wall_clock_s: float = 1800.0
-    max_usd: float = 0.0
+    max_usd: float = 5.0
+    """Spend ceiling for a single run, checked before each model call."""
+
     max_consecutive_failures: int = 4
 
     steps: int = 0

@@ -1,13 +1,15 @@
 """The LLM gateway: routing, fallback, retries and cost accounting (spec §15).
 
-Two properties the rest of the runtime relies on:
+Three properties the rest of the runtime relies on:
 
-1. Application code never knows which provider served a call. Tier selection
-   is a *policy decision*, logged like any other.
-2. A provider that costs money cannot be reached without the `PAID_INFERENCE`
-   capability. A free-tier 429 therefore degrades into a logged fallback
-   rather than an outage - which is exactly the resilience behaviour §13 asks
-   us to demonstrate, obtained for free from the budget constraint.
+1. Application code never learns which provider served a call. Selection is a
+   *routing decision*, recorded like any other decision the runtime makes.
+2. Spend is checked before a request leaves the process, not tallied after it
+   returns. A call whose projected cost would breach the run's ceiling is not
+   made; the gateway moves down the fallback chain instead.
+3. A provider outage degrades into a logged failover rather than a run
+   failure. Every attempt - taken, skipped or failed - is reported through
+   `on_attempt`, so the whole routing chain lands in the trace.
 """
 
 from __future__ import annotations
@@ -24,13 +26,14 @@ __all__ = ["CostLedger", "LLMGateway", "RouteAttempt"]
 
 @dataclass
 class CostLedger:
-    """Running cost and token totals, checked before every call.
+    """Running spend and token totals for one run, checked before every call.
 
-    `usd_ceiling` defaults to 0.0: the runtime refuses to spend money unless
-    someone explicitly raises it. That is the whole trick.
+    The ledger is authoritative for *routing*: the gateway consults it to
+    decide whether a provider is affordable, which is why the ceiling lives
+    here rather than being inspected after the fact by a dashboard.
     """
 
-    usd_ceiling: float = 0.0
+    usd_ceiling: float = 5.0
     token_ceiling: int = 250_000
     spent_usd: float = 0.0
     spent_tokens: int = 0
@@ -38,6 +41,10 @@ class CostLedger:
 
     def would_exceed(self, projected_usd: float) -> bool:
         return round(self.spent_usd + projected_usd, 10) > self.usd_ceiling
+
+    @property
+    def remaining_usd(self) -> float:
+        return round(max(0.0, self.usd_ceiling - self.spent_usd), 10)
 
     def check_headroom(self) -> None:
         if self.spent_tokens >= self.token_ceiling:
@@ -100,17 +107,22 @@ class LLMGateway:
         last_error: Exception | None = None
 
         for provider in self.providers:
-            # -- the cost gate. A paid provider under a $0 ceiling never runs.
+            # -- the spend gate, applied before the request is sent.
+            #    Projected on the request's own token ceiling, so the estimate
+            #    is an upper bound rather than a hopeful guess.
             projected = provider.pricing.cost(
                 Usage(input_tokens=request.max_tokens, output_tokens=request.max_tokens)
             )
-            if not provider.pricing.is_free and self.ledger.would_exceed(projected):
+            if self.ledger.would_exceed(projected):
                 attempts.append(
                     RouteAttempt(
                         provider=provider.name,
                         model=provider.model,
                         ok=False,
-                        reason=f"blocked: would exceed usd_ceiling={self.ledger.usd_ceiling}",
+                        reason=(
+                            f"skipped: projected ${projected:.4f} would exceed the "
+                            f"remaining budget of ${self.ledger.remaining_usd:.4f}"
+                        ),
                     )
                 )
                 self._notify(attempts[-1])
@@ -153,9 +165,12 @@ class LLMGateway:
                 return priced
 
         if blocked_all:
-            raise PolicyDenied(
-                "every provider was blocked by the cost ceiling",
-                reason="no free-tier provider available",
+            raise BudgetExhausted(
+                "no provider fits the remaining budget",
+                reason=(
+                    f"${self.ledger.remaining_usd:.4f} left of a "
+                    f"${self.ledger.usd_ceiling:.2f} ceiling"
+                ),
                 policy_version="cost-ledger",
             )
         raise ProviderUnavailable(

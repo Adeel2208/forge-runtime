@@ -321,7 +321,7 @@ class BenchmarkRunner:
 
         provider = MockProvider(self._script_for(task, fault))
         registry = build_default_registry()
-        bundle = PolicyBundle.zero_cost(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
+        bundle = PolicyBundle.baseline(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
         injector = (
             FaultInjector.none()
             if FaultInjector.shapes_script(fault) or fault is FaultClass.NONE

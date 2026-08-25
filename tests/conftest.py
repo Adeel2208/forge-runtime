@@ -75,7 +75,7 @@ def make_runtime(store_path: Path) -> Callable[..., AgentRuntime]:
         usd_ceiling: float = 0.0,
     ) -> AgentRuntime:
         provider = script if isinstance(script, MockProvider) else MockProvider(script)
-        bundle = PolicyBundle.zero_cost(
+        bundle = PolicyBundle.baseline(
             granted=DEFAULT_GRANTS if grants is None else grants
         )
         cfg = config or RuntimeConfig()

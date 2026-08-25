@@ -53,19 +53,15 @@ class PolicyBundle:
     # -- factories ---------------------------------------------------------
 
     @classmethod
-    def zero_cost(cls, *, granted: list[str] | None = None, **budget_kwargs: Any) -> PolicyBundle:
-        """The default bundle: free inference allowed, paid inference denied.
+    def baseline(cls, *, granted: list[str] | None = None, **budget_kwargs: Any) -> PolicyBundle:
+        """A conservative starting bundle: inference on, every tool opt-in.
 
-        This is `forge/security/policies/zero_cost.yaml` expressed in code, and
-        the two are kept in step by `tests/unit/test_policy_bundle_yaml.py`.
+        Mirrors `forge/security/policies/default.yaml`. Intended as the base a
+        deployment narrows or extends, not as a permissive fallback - a
+        capability that is not named here is not granted.
         """
         caps: dict[str, CapabilityGrant] = {
-            "PAID_INFERENCE": CapabilityGrant(
-                name="PAID_INFERENCE", granted=False, requires_approval=True
-            ),
-            "FREE_TIER_INFERENCE": CapabilityGrant(
-                name="FREE_TIER_INFERENCE", granted=True
-            ),
+            "INFERENCE": CapabilityGrant(name="INFERENCE", granted=True),
         }
         for name in granted or []:
             caps[name] = CapabilityGrant(
@@ -76,9 +72,9 @@ class PolicyBundle:
                 ),
             )
         return cls(
-            version="zero-cost/1.0.0",
+            version="baseline/1.0.0",
             capabilities=caps,
-            budget=Budget(max_usd=0.0, **budget_kwargs),
+            budget=Budget(**budget_kwargs),
         )
 
     @classmethod
@@ -207,19 +203,28 @@ class PolicyEngine:
             obligations=["dry_run"] if dry_run else [],
         )
 
-    def authorize_inference(self, *, provider_is_free: bool) -> PolicyDecision:
-        """The cost gate, expressed as an ordinary capability check."""
-        capability = "FREE_TIER_INFERENCE" if provider_is_free else "PAID_INFERENCE"
-        grant = self.bundle.capabilities.get(capability)
+    def authorize_inference(self, *, projected_usd: float = 0.0) -> PolicyDecision:
+        """Gate a model call on capability and remaining spend.
+
+        Cost is evaluated *before* the request leaves the process, so a run
+        cannot discover it is over budget by having already gone over.
+        """
+        grant = self.bundle.capabilities.get("INFERENCE")
         if grant is None or not grant.granted:
+            return self._deny("capability 'INFERENCE' is not granted", capability="INFERENCE")
+
+        budget = self.bundle.budget
+        if round(budget.usd + projected_usd, 10) > budget.max_usd:
             return self._deny(
-                f"capability {capability!r} is not granted", capability=capability
+                f"projected spend ${budget.usd + projected_usd:.4f} exceeds the run "
+                f"ceiling of ${budget.max_usd:.2f}",
+                capability="INFERENCE",
             )
         return PolicyDecision(
             decision=Decision.ALLOW,
             reason="inference permitted",
             policy_version=self.bundle.version,
-            capability=capability,
+            capability="INFERENCE",
         )
 
     def _deny(

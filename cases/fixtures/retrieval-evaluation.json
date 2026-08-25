@@ -1,0 +1,31 @@
+{
+  "turns": [
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "search_corpus",
+        "arguments": {
+          "query": "evaluation"
+        },
+        "rationale_summary": "Locate the relevant document."
+      }
+    },
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "read_document",
+        "arguments": {
+          "key": "evaluation"
+        },
+        "rationale_summary": "Read the full text."
+      }
+    },
+    {
+      "proposal": {
+        "kind": "ANSWER",
+        "answer": "Trajectory-level metrics predicted deployment failures more reliably than final-answer scoring, which missed 41% of runs that reached a correct answer through an unsafe path.",
+        "rationale_summary": "Evidence gathered; answering."
+      }
+    }
+  ]
+}

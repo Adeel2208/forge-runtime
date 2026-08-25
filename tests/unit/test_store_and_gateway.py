@@ -7,7 +7,7 @@ import pytest
 from forge.core.contracts import Checkpoint, Usage
 from forge.core.enums import EventType
 from forge.core.events import NewEvent
-from forge.errors import PolicyDenied, ProviderUnavailable
+from forge.errors import BudgetExhausted, PolicyDenied, ProviderUnavailable
 from forge.llm.base import ModelRequest, Pricing
 from forge.llm.gateway import CostLedger, LLMGateway
 from forge.llm.mock import MockProvider, ScriptedTurn
@@ -210,30 +210,33 @@ class _PaidProvider:
 
     async def complete(self, request):
         self.called += 1
-        raise AssertionError("a paid provider must never be reached under a $0 ceiling")
+        raise AssertionError("this provider must never be reached in this test")
 
 
-def test_zero_ceiling_blocks_a_paid_provider() -> None:
-    """The cost gate, tested directly: $0.00 means the call does not happen."""
+def test_unaffordable_provider_is_never_called() -> None:
+    """Spend is checked before the request leaves the process.
+
+    A run must not discover it is over budget by having already gone over.
+    """
     paid = _PaidProvider()
-    gateway = LLMGateway(providers=[paid], ledger=CostLedger(usd_ceiling=0.0))
-    with pytest.raises(PolicyDenied, match="cost ceiling"):
+    gateway = LLMGateway(providers=[paid], ledger=CostLedger(usd_ceiling=0.01))
+    with pytest.raises(BudgetExhausted, match="remaining budget"):
         run(gateway.complete(REQUEST))
-    assert paid.called == 0
+    assert paid.called == 0, "an unaffordable provider must not be contacted"
 
 
-def test_gateway_falls_back_from_paid_to_free() -> None:
-    paid, free = _PaidProvider(), MockProvider.answering("hello")
-    gateway = LLMGateway(providers=[paid, free], ledger=CostLedger(usd_ceiling=0.0))
+def test_gateway_falls_back_when_the_preferred_provider_is_unaffordable() -> None:
+    """Budget pressure degrades into routing, not into an outage."""
+    paid, cheap = _PaidProvider(), MockProvider.answering("hello")
+    gateway = LLMGateway(providers=[paid, cheap], ledger=CostLedger(usd_ceiling=0.01))
     response = run(gateway.complete(REQUEST))
     assert response.provider == "mock"
     assert paid.called == 0
-    assert response.usage.usd == 0.0
 
 
-def test_raised_ceiling_admits_a_paid_provider() -> None:
-    """The gate is a budget, not a ban: raise the ceiling and it opens."""
-    gateway = LLMGateway(providers=[_PaidProvider()], ledger=CostLedger(usd_ceiling=100.0))
+def test_an_affordable_provider_is_reached() -> None:
+    """The gate is a budget, not a ban: with headroom, the call is made."""
+    gateway = LLMGateway(providers=[_PaidProvider()], ledger=CostLedger(usd_ceiling=1000.0))
     with pytest.raises(AssertionError, match="never be reached"):
         run(gateway.complete(REQUEST))
 
@@ -262,7 +265,7 @@ def test_gateway_raises_when_everything_fails() -> None:
 
 
 def test_token_ceiling_stops_further_calls() -> None:
-    ledger = CostLedger(token_ceiling=10)
+    ledger = CostLedger(token_ceiling=10, usd_ceiling=10.0)
     ledger.spent_tokens = 10
     gateway = LLMGateway(providers=[MockProvider.answering("x")], ledger=ledger)
     with pytest.raises(PolicyDenied, match="token ceiling"):
@@ -275,7 +278,7 @@ def test_ledger_accumulates_usage() -> None:
     run(gateway.complete(REQUEST))
     assert gateway.ledger.calls == 2
     assert gateway.ledger.spent_tokens > 0
-    assert gateway.ledger.spent_usd == 0.0
+    assert gateway.ledger.remaining_usd == gateway.ledger.usd_ceiling
 
 
 # -------------------------------------------------------------- mock provider

@@ -252,7 +252,7 @@ def test_forged_permit_is_refused() -> None:
 
 
 def _engine(granted: list[str] | None = None) -> PolicyEngine:
-    return PolicyEngine(PolicyBundle.zero_cost(granted=granted or []))
+    return PolicyEngine(PolicyBundle.baseline(granted=granted or []))
 
 
 def test_policy_denies_tool_outside_task_allow_list() -> None:
@@ -282,16 +282,28 @@ def test_policy_escalates_irreversible_writes() -> None:
     assert decision.decision is Decision.REQUIRE_APPROVAL
 
 
-def test_paid_inference_is_denied_under_zero_cost_policy() -> None:
+def test_inference_is_gated_on_remaining_budget() -> None:
+    """Spend is authorized before the request leaves the process."""
     engine = _engine()
-    assert engine.authorize_inference(provider_is_free=True).decision is Decision.ALLOW
-    assert engine.authorize_inference(provider_is_free=False).decision is Decision.DENY
+    engine.bundle.budget.max_usd = 1.00
+    assert engine.authorize_inference(projected_usd=0.10).decision is Decision.ALLOW
+
+    engine.bundle.budget.usd = 0.95
+    denied = engine.authorize_inference(projected_usd=0.10)
+    assert denied.decision is Decision.DENY
+    assert "exceeds the run ceiling" in denied.reason
+
+
+def test_inference_requires_the_capability() -> None:
+    engine = _engine()
+    engine.bundle.capabilities.pop("INFERENCE")
+    assert engine.authorize_inference().decision is Decision.DENY
 
 
 def test_capability_invocation_ceiling_is_enforced() -> None:
     from forge.security.capabilities import CapabilityGrant
 
-    bundle = PolicyBundle.zero_cost()
+    bundle = PolicyBundle.baseline()
     bundle.capabilities["KNOWLEDGE_READ"] = CapabilityGrant(
         name="KNOWLEDGE_READ", granted=True, max_invocations=2,
         allowed_effects=frozenset({SideEffect.READ}),

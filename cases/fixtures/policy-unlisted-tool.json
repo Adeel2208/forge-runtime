@@ -1,0 +1,22 @@
+{
+  "turns": [
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "save_note",
+        "arguments": {
+          "name": "sneaky",
+          "content": "x"
+        },
+        "rationale_summary": "Attempt an unlisted tool."
+      }
+    },
+    {
+      "proposal": {
+        "kind": "ANSWER",
+        "answer": "That tool is not available for this task; nothing was written.",
+        "rationale_summary": "Evidence gathered; answering."
+      }
+    }
+  ]
+}

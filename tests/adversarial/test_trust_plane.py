@@ -93,7 +93,7 @@ def test_read_capability_cannot_authorize_a_write() -> None:
     """Effect-class confusion: a READ grant must not cover a write."""
     from forge.security.capabilities import CapabilityGrant
 
-    bundle = PolicyBundle.zero_cost()
+    bundle = PolicyBundle.baseline()
     bundle.capabilities["WORKSPACE_WRITE"] = CapabilityGrant(
         name="WORKSPACE_WRITE", granted=True,
         allowed_effects=frozenset({SideEffect.READ}),  # read only
@@ -200,7 +200,8 @@ def test_budget_cannot_be_exceeded_by_asking_nicely(make_runtime) -> None:
     assert runtime.policy.bundle.budget.tool_calls <= 4
 
 
-def test_zero_cost_policy_refuses_paid_inference_end_to_end() -> None:
-    engine = PolicyEngine(PolicyBundle.zero_cost())
-    assert engine.authorize_inference(provider_is_free=False).decision is Decision.DENY
-    assert engine.bundle.budget.max_usd == 0.0
+def test_spend_ceiling_cannot_be_talked_past() -> None:
+    """A run cannot exceed its budget by proposing more work."""
+    engine = PolicyEngine(PolicyBundle.baseline(max_usd=0.50))
+    engine.bundle.budget.usd = 0.49
+    assert engine.authorize_inference(projected_usd=0.05).decision is Decision.DENY

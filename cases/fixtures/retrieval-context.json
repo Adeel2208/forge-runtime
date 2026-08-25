@@ -1,0 +1,31 @@
+{
+  "turns": [
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "search_corpus",
+        "arguments": {
+          "query": "context"
+        },
+        "rationale_summary": "Locate the relevant document."
+      }
+    },
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "read_document",
+        "arguments": {
+          "key": "context"
+        },
+        "rationale_summary": "Read the full text."
+      }
+    },
+    {
+      "proposal": {
+        "kind": "ANSWER",
+        "answer": "Context compilation reduced token usage by 38% versus naive history concatenation, with no measured loss in task success rate.",
+        "rationale_summary": "Evidence gathered; answering."
+      }
+    }
+  ]
+}

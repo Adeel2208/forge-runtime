@@ -55,7 +55,7 @@ def build(store: SQLiteEventStore, faults: Any = None) -> AgentRuntime:
         gateway=LLMGateway(providers=[MockProvider(SCRIPT)], ledger=CostLedger()),
         registry=build_default_registry(),
         policy=PolicyEngine(
-            PolicyBundle.zero_cost(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
+            PolicyBundle.baseline(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
         ),
         config=RuntimeConfig(max_steps=8),
         faults=faults,

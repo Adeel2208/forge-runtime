@@ -31,7 +31,7 @@ app = typer.Typer(
 )
 
 DEFAULT_DB = ".forge/forge.db"
-DEFAULT_POLICY = Path(__file__).parent / "security" / "policies" / "zero_cost.yaml"
+DEFAULT_POLICY = Path(__file__).parent / "security" / "policies" / "default.yaml"
 DEFAULT_TOOLS = ["search_corpus", "read_document", "calculate", "save_note"]
 
 
@@ -64,11 +64,11 @@ def _runtime(
     bundle = (
         PolicyBundle.from_yaml(policy_path)
         if policy_path.exists()
-        else PolicyBundle.zero_cost(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
+        else PolicyBundle.baseline(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
     )
     return AgentRuntime(
         store=store,
-        gateway=LLMGateway(providers=[provider], ledger=CostLedger(usd_ceiling=0.0)),
+        gateway=LLMGateway(providers=[provider], ledger=CostLedger(usd_ceiling=bundle.budget.max_usd)),
         registry=build_default_registry(),
         policy=PolicyEngine(bundle),
         config=RuntimeConfig(seed=seed, auto_approve=approve),
@@ -258,7 +258,7 @@ def replay(
                 bundle = (
                     PolicyBundle.from_yaml(policy)
                     if policy.exists()
-                    else PolicyBundle.zero_cost(
+                    else PolicyBundle.baseline(
                         granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"]
                     )
                 )

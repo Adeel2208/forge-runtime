@@ -1,0 +1,41 @@
+{
+  "turns": [
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "search_corpus",
+        "arguments": {
+          "query": "idempotency"
+        }
+      },
+      "malformed": true
+    },
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "search_corpus",
+        "arguments": {
+          "query": "idempotency"
+        },
+        "rationale_summary": "Locate the document."
+      }
+    },
+    {
+      "proposal": {
+        "kind": "TOOL_CALL",
+        "tool": "read_document",
+        "arguments": {
+          "key": "idempotency"
+        },
+        "rationale_summary": "Read the full text."
+      }
+    },
+    {
+      "proposal": {
+        "kind": "ANSWER",
+        "answer": "Idempotency keys are derived from run id, tool name and canonical arguments, so a retried write reuses its key.",
+        "rationale_summary": "Evidence gathered; answering."
+      }
+    }
+  ]
+}
