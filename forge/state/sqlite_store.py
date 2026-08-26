@@ -85,6 +85,9 @@ class SQLiteEventStore:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=FULL")   # durability over throughput
         conn.execute("PRAGMA foreign_keys=ON")
+        # Multiple processes may share this file (an API replica and a
+        # supervisor, say). Wait for the writer rather than failing fast.
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.executescript(_SCHEMA)
         return conn
 
@@ -236,6 +239,63 @@ class SQLiteEventStore:
         async with self._lock:
             rows = await asyncio.to_thread(self._list_runs_sync, limit)
         return [dict(r) for r in rows]
+
+    async def prune(self, *, older_than_days: float, keep_unfinished: bool = True) -> int:
+        async with self._lock:
+            return await asyncio.to_thread(self._prune_sync, older_than_days, keep_unfinished)
+
+    def _prune_sync(self, older_than_days: float, keep_unfinished: bool) -> int:
+        from datetime import timedelta
+
+        conn = self._require()
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+
+        terminal = "('RUN_COMPLETED','RUN_FAILED','RUN_ABORTED')"
+        # Eligible = every event for the run predates the cutoff, so an old run
+        # that was resumed recently is not silently truncated mid-history.
+        condition = f"SELECT run_id FROM events GROUP BY run_id HAVING MAX(ts) < '{cutoff}'"
+        if keep_unfinished:
+            condition += (
+                f" AND SUM(CASE WHEN type IN {terminal} THEN 1 ELSE 0 END) > 0"
+            )
+
+        victims = [str(r["run_id"]) for r in conn.execute(condition)]
+        if not victims:
+            return 0
+
+        placeholders = ",".join("?" * len(victims))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(f"DELETE FROM events WHERE run_id IN ({placeholders})", victims)
+            conn.execute(f"DELETE FROM checkpoints WHERE run_id IN ({placeholders})", victims)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        return len(victims)
+
+    async def unfinished_runs(self, *, limit: int = 100) -> list[str]:
+        async with self._lock:
+            rows = await asyncio.to_thread(self._unfinished_sync, limit)
+        return [str(r["run_id"]) for r in rows]
+
+    def _unfinished_sync(self, limit: int) -> list[sqlite3.Row]:
+        conn = self._require()
+        # A run is unfinished if it was created and has no terminal event.
+        # Ordered oldest-first so the longest-abandoned work is recovered
+        # before work that only just stopped.
+        return list(
+            conn.execute(
+                "SELECT run_id, MIN(seq) AS started FROM events"
+                " WHERE run_id IN (SELECT run_id FROM events WHERE type='RUN_CREATED')"
+                "   AND run_id NOT IN ("
+                "       SELECT run_id FROM events"
+                "       WHERE type IN ('RUN_COMPLETED','RUN_FAILED','RUN_ABORTED')"
+                "   )"
+                " GROUP BY run_id ORDER BY started LIMIT ?",
+                (limit,),
+            )
+        )
 
     def _list_runs_sync(self, limit: int) -> list[sqlite3.Row]:
         conn = self._require()

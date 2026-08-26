@@ -58,3 +58,22 @@ class EventStore(Protocol):
     async def latest_checkpoint(self, run_id: str) -> Checkpoint | None: ...
 
     async def list_runs(self, *, limit: int = 50) -> list[dict[str, object]]: ...
+
+    async def prune(self, *, older_than_days: float, keep_unfinished: bool = True) -> int:
+        """Delete finished runs older than a cutoff. Returns runs removed.
+
+        Whole runs only. Partially pruning a run's events would leave a log
+        that projects to a state that never existed - worse than no history,
+        because it looks like history. Unfinished runs are retained by
+        default: they may still be recoverable.
+        """
+        ...
+
+    async def unfinished_runs(self, *, limit: int = 100) -> list[str]:
+        """Runs that were started and never reached a terminal event.
+
+        This is how a supervisor finds work a dead worker abandoned. It is
+        derived purely from the log - a killed process cannot write a
+        "I died" marker, so absence of a terminal event *is* the signal.
+        """
+        ...

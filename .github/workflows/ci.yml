@@ -22,10 +22,10 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,api]"
 
       # No services, no network, no API keys. The suite runs entirely on
-      # MockProvider and SQLite - see ADR-0003 and ADR-0004.
+      # MockProvider and SQLite - see ADR-0002 and ADR-0004.
       - name: Test
         run: pytest -q
 
@@ -35,16 +35,37 @@ jobs:
       - name: Type-check
         run: mypy forge
 
-      - name: Benchmark (proves the report is reproducible)
-        run: |
-          python -m forge.cli bench --trials 1 --out reports/ci
-          cat reports/ci/failure_injection.md >> "$GITHUB_STEP_SUMMARY"
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -e ".[dev,api]"
 
-      - name: Assert zero duplicate effects
+      # The harness must fail against deliberately broken targets before its
+      # green result on the real case set means anything.
+      - name: Harness meta-tests (negative fixtures)
+        run: pytest tests/eval -q
+
+      - name: Validate the case set
+        run: python -m forge.cli eval validate cases/
+
+      - name: Run the evaluation harness
+        run: |
+          python -m forge.cli eval run cases/ --target inprocess --out reports/ci-eval
+          cat reports/ci-eval/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Failure-injection benchmark
+        run: |
+          python -m forge.cli bench --trials 1 --out reports/ci-bench
+          cat reports/ci-bench/failure_injection.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assert zero duplicate external effects
         run: |
           python - <<'PY'
           import json, sys
-          data = json.load(open("reports/ci/failure_injection.json"))
+          data = json.load(open("reports/ci-bench/failure_injection.json"))
           bad = {k: v["duplicate_effects"]
                  for k, v in data["summary"].items() if v["duplicate_effects"]}
           if bad:
@@ -52,13 +73,66 @@ jobs:
           print("0 duplicate effects across all fault classes")
           PY
 
-      # The harness must fail against deliberately broken targets before its
-      # green result on the real case set means anything.
-      - name: Harness meta-tests (negative fixtures)
-        run: pytest tests/eval -q
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-records
+          path: reports/
 
-      - name: Evaluation harness
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+
+      # Packaging bugs only ever show up through a built artifact, never
+      # through an editable install.
+      - name: Build wheel
         run: |
-          python -m forge.cli eval validate cases/
-          python -m forge.cli eval run cases/ --target inprocess --out reports/ci-eval
-          cat reports/ci-eval/report.md >> "$GITHUB_STEP_SUMMARY"
+          pip install build
+          python -m build --wheel --outdir dist
+
+      - name: Install the wheel clean and smoke-test it
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --quiet "$(ls dist/*.whl)[api]"
+          /tmp/clean/bin/forge --help > /dev/null
+          /tmp/clean/bin/python - <<'PY'
+          import pathlib
+          import forge
+          root = pathlib.Path(forge.__file__).parent
+          assert (root / "py.typed").exists(), "wheel is missing py.typed"
+          assert (root / "security/policies/default.yaml").exists(), \
+              "wheel is missing the packaged policy bundle"
+          print("wheel ok:", forge.__version__)
+          PY
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t forge:ci .
+
+      - name: Boot it and probe
+        run: |
+          docker run -d --name forge-ci -p 8080:8080 \
+            -e FORGE_API_KEYS="ci:ci-secret" forge:ci
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/livez > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8080/livez
+          curl -sf http://127.0.0.1:8080/readyz
+          # An unauthenticated write must be refused.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' -d '{"goal":"x"}' \
+            http://127.0.0.1:8080/runs)
+          test "$code" = "401" || { echo "expected 401, got $code"; exit 1; }
+          echo "container healthy and auth enforced"
+
+      - name: Logs
+        if: always()
+        run: docker logs forge-ci || true

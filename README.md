@@ -186,14 +186,23 @@ pip install -e ".[dev]"
 python -m forge.cli demo              # run, kill the worker, resume, prove no duplicate effects
 forge eval validate cases/            # check the case set loads and every grader exists
 forge eval run cases/                 # execute the suite, write records + report
-pytest                                # 149 tests, ~25s, no network
+pytest                                # 181 tests, no network, no services
 ```
 
 Serve it:
 
 ```bash
 pip install -e ".[api]"
-uvicorn "forge.api:create_app" --factory --port 8080
+export FORGE_API_KEYS="local:$(openssl rand -hex 32)"
+forge serve --port 8080
+```
+
+Or with Docker — see [docs/deployment.md](docs/deployment.md):
+
+```bash
+docker build -t forge:0.3.0 .
+docker run -d -p 8080:8080 -v forge-data:/data \
+  -e FORGE_API_KEYS="prod:$(openssl rand -hex 32)" forge:0.3.0
 ```
 
 `POST /runs` returns `202` immediately — a long-horizon run can take minutes,
@@ -298,17 +307,62 @@ cases/           the case set, as data
 docs/adr/        why the load-bearing decisions are what they are
 ```
 
-## Scope
+## Operations
 
-**Built:** typed core, durable state, trust plane, observability, replay,
-failure-injection benchmark, evaluation harness, HTTP service, configuration.
+Recovery is automatic. On startup and on an interval, a **supervisor** sweeps
+for runs with no terminal event and no live lease, then reclaims and resumes
+them — including runs abandoned by a deployment that no longer exists. Claiming
+is a single atomic conditional write, so concurrent supervisors cannot both
+recover the same run, and recovery re-enters the ordinary resume path and
+therefore inherits the exactly-once effect guarantee.
 
-**Not built yet**, in the order they should come: DAG orchestration (parallel
-branches, fan-in, compensation nodes), governed long-term memory, a sandbox for
-code-executing agents, and the Postgres backend — the `EventStore` protocol is
-five methods wide specifically so that stays a small delta (ADR-0004).
+That closes the gap this project cares most about: a runtime that survives a
+crash is only half a durable system if nothing notices the crash.
 
-See [docs/adr/](docs/adr/) for the reasoning.
+| | |
+|---|---|
+| Auth | Bearer / `X-API-Key`, constant-time compare, per-principal rate limiting |
+| Probes | `/livez` (process), `/readyz` (can take traffic), `/healthz` (detail) |
+| Metrics | `/metrics`, Prometheus text exposition |
+| Shutdown | SIGTERM drains in-flight runs; anything cancelled is recovered, not lost |
+| Logs | One JSON object per line, redacted, on `forge.*` only |
+| Retention | `forge prune --older-than-days 30` — whole finished runs only |
+
+Full guide, including what to alert on: **[docs/deployment.md](docs/deployment.md)**.
+
+## Scope — read before deploying
+
+**Built and tested:** typed core, durable state, trust plane, observability,
+replay, failure-injection benchmark, evaluation harness, HTTP service with auth
+and graceful shutdown, run supervisor and leases, configuration, retention,
+packaging.
+
+**Known ceilings.** These are limits, not bugs, and you should plan around them:
+
+- **One replica per database.** The SQLite backend has a single writer. The
+  lease and supervisor machinery is already multi-replica correct, so the
+  Postgres backend is a small delta (ADR-0004) — but it is not built, and
+  until it is, scale vertically or shard.
+- **No sandbox.** A tool executes in the service process. Do not register a
+  tool that runs untrusted code. The shipped tools are safe (the calculator
+  walks an AST allow-list rather than calling `eval`), but a tool you add is
+  only as safe as you make it.
+- **No multi-tenancy.** One policy bundle, one budget scope. API keys identify
+  a caller for logging and rate limiting; they do not isolate data.
+- **Budgets are per run.** A thousand runs each just under the ceiling is not
+  caught. Enforce a fleet budget upstream.
+- **Rate limiting is in-process.** It bounds one replica, not a fleet.
+
+**Not built**, in the order they should come: Postgres backend, sandbox,
+DAG orchestration (parallel branches, fan-in, compensation nodes), governed
+long-term memory, multi-tenancy.
+
+**Zero production hours.** Every guarantee here is backed by tests, including a
+real `os._exit()` process kill and negative fixtures that prove the harness
+bites. None of it is backed by having run someone's real workload yet.
+
+See [docs/adr/](docs/adr/) for the reasoning behind the load-bearing decisions,
+and [CHANGELOG.md](CHANGELOG.md) for what changed when.
 
 ## Licence
 

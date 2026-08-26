@@ -328,6 +328,72 @@ def policy_show(
 
 
 @app.command()
+def prune(
+    older_than_days: Annotated[float, typer.Option(help="Age cutoff in days.")] = 30.0,
+    db: Annotated[str, typer.Option()] = DEFAULT_DB,
+    include_unfinished: Annotated[
+        bool,
+        typer.Option(help="Also delete runs that never finished - they may be recoverable."),
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation prompt.")] = False,
+) -> None:
+    """Delete finished runs older than a cutoff. Whole runs only.
+
+    An append-only log grows forever unless something removes from it. This is
+    the only operation in FORGE that destroys history, so it asks first.
+    """
+
+    async def main() -> int:
+        store = SQLiteEventStore(db)
+        await store.open()
+        try:
+            if not yes:
+                scope = "finished and unfinished" if include_unfinished else "finished"
+                _echo(
+                    f"\n  about to delete {scope} runs older than "
+                    f"{older_than_days:g} days from {db}"
+                )
+                typer.confirm("  proceed?", abort=True)
+            removed = await store.prune(
+                older_than_days=older_than_days,
+                keep_unfinished=not include_unfinished,
+            )
+            _echo(f"\n  pruned {removed} run(s)\n")
+            return 0
+        finally:
+            await store.close()
+
+    raise typer.Exit(asyncio.run(main()))
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option()] = "127.0.0.1",
+    port: Annotated[int, typer.Option()] = 8080,
+    reload: Annotated[bool, typer.Option(help="Reload on code change (development).")] = False,
+) -> None:
+    """Run the HTTP service. Requires the `api` extra.
+
+    Binds to loopback by default: exposing an agent runtime on 0.0.0.0 should
+    be a deliberate act, not a default.
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        _echo('\n  the api extra is not installed:  pip install "forge-runtime[api]"\n')
+        raise typer.Exit(2) from None
+
+    uvicorn.run(
+        "forge.api:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+        timeout_graceful_shutdown=30,
+    )
+
+
+@app.command()
 def doctor() -> None:
     """Check the local environment: providers, models, and the event store."""
 

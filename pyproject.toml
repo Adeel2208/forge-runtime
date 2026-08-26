@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "forge-runtime"
-version = "0.1.0"
+version = "0.3.0"
 description = "A durable, policy-aware execution runtime for long-horizon AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,9 +35,14 @@ dev = [
 
 [project.scripts]
 forge = "forge.cli:app"
+forge-server = "forge.api.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["forge"]
+
+# Ship the type marker so downstream consumers get types, and the packaged
+# policy bundle so a default deployment works without a config file.
+artifacts = ["forge/py.typed", "forge/security/policies/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
