@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -97,7 +98,7 @@ class Harness:
                 for case in self.cases
             ]
             return results
-        except Exception as exc:  # noqa: BLE001 - a broken adapter is a harness bug
+        except Exception as exc:
             manifest.finished_at = datetime.now(UTC).isoformat(timespec="seconds")
             results.records = [
                 self._record(case, Outcome.HARNESS_ERROR, error=f"setup raised: {exc!r}")
@@ -124,11 +125,11 @@ class Harness:
                 await asyncio.gather(*(one(case) for case in self.cases))
             )
         finally:
-            # Teardown must run even when everything failed.
-            try:
+            # Teardown must run even when every case failed, and its own
+            # failure must not overwrite the results we already have - a
+            # scratch directory that would not delete is not a verdict.
+            with suppress(Exception):
                 await self.target.teardown()
-            except Exception:  # noqa: BLE001 - teardown noise must not mask results
-                pass
 
         manifest.finished_at = datetime.now(UTC).isoformat(timespec="seconds")
         manifest.target_version = self.target.version
@@ -173,6 +174,11 @@ class Harness:
         self, case: Case, seed: int
     ) -> tuple[Outcome, Observation | None, str | None]:
         """Execute once and classify the result. No grading happens here."""
+        # Deliberately `Any`: `Target` is a Protocol, so its declared return
+        # type is a promise the adapter makes, not one the runtime enforces.
+        # Trusting it here would turn a third-party adapter's bug into a
+        # confusing failure attributed to the target.
+        observation: Any
         try:
             observation = await asyncio.wait_for(
                 self.target.execute(case, seed=seed), timeout=case.timeout_s
@@ -183,7 +189,7 @@ class Harness:
             return Outcome.TARGET_UNAVAILABLE, None, str(exc)
         except (ConnectionError, OSError) as exc:
             return Outcome.INFRA_ERROR, None, f"{type(exc).__name__}: {exc}"
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # The adapter raised something it did not classify. That is a bug
             # in the harness or the adapter, not a verdict on the target.
             return Outcome.HARNESS_ERROR, None, f"{type(exc).__name__}: {exc}"
@@ -202,7 +208,7 @@ class Harness:
             grades = await grade_all(
                 case, observation, judge_provider=self.config.judge_provider
             )
-        except Exception as exc:  # noqa: BLE001 - a broken grader is a harness bug
+        except Exception as exc:
             return self._record(
                 case, Outcome.HARNESS_ERROR, observation=observation,
                 error=f"grader raised: {type(exc).__name__}: {exc}",

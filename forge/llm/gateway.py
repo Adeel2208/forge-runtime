@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from forge.core.contracts import Usage
-from forge.errors import BudgetExhausted, PolicyDenied, ProviderUnavailable
+from forge.errors import BudgetExhausted, ProviderUnavailable
 from forge.llm.base import LLMProvider, ModelRequest, ModelResponse
 
 __all__ = ["CostLedger", "LLMGateway", "RouteAttempt"]

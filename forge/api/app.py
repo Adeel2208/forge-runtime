@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from forge import __version__
 from forge.config import ForgeConfig
 from forge.core.enums import RunStatus
-from forge.harness import Harness
+from forge.deployment import Forge
 from forge.ids import new_id
 from forge.state.projection import project
 
@@ -59,16 +59,16 @@ class RunView(BaseModel):
     error: str | None = None
 
 
-def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = None) -> FastAPI:
-    """Build the ASGI app. Accepts an injected harness for testing."""
+def create_app(config: ForgeConfig | None = None, *, deployment: Forge | None = None) -> FastAPI:
+    """Build the ASGI app. Accepts an injected deployment for testing."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await app.state.harness.open()
+        await app.state.forge.open()
         try:
             yield
         finally:
-            await app.state.harness.close()
+            await app.state.forge.close()
 
     app = FastAPI(
         title="FORGE",
@@ -76,7 +76,7 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
         summary="Durable, policy-aware execution runtime for long-horizon AI agents.",
         lifespan=lifespan,
     )
-    app.state.harness = harness or Harness(config=config or ForgeConfig.load())
+    app.state.forge = deployment or Forge(config=config or ForgeConfig.load())
     app.state.inflight = {}
 
     # -- runs --------------------------------------------------------------
@@ -84,7 +84,7 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
     @app.post("/runs", status_code=202, response_model=RunAccepted)
     async def start_run(body: RunRequest, background: BackgroundTasks) -> RunAccepted:
         """Accept a task and execute it in the background."""
-        h: Harness = app.state.harness
+        h: Forge = app.state.forge
         run_id = new_id("run")
 
         async def execute() -> None:
@@ -92,7 +92,7 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
                 await h.run(
                     body.goal, tools=body.tools, max_steps=body.max_steps, run_id=run_id
                 )
-            except BaseException as exc:  # noqa: BLE001 - recorded, never swallowed silently
+            except BaseException as exc:
                 app.state.inflight[run_id] = f"{type(exc).__name__}: {exc}"
             else:
                 app.state.inflight.pop(run_id, None)
@@ -100,14 +100,15 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
         background.add_task(execute)
         return RunAccepted(run_id=run_id, status="accepted", href=f"/runs/{run_id}")
 
-    @app.get("/runs", response_model=list[dict])
+    @app.get("/runs")
     async def list_runs(limit: int = Query(default=50, ge=1, le=500)) -> list[dict[str, Any]]:
-        return await app.state.harness.runs(limit=limit)
+        rows: list[dict[str, Any]] = await app.state.forge.runs(limit=limit)
+        return rows
 
     @app.get("/runs/{run_id}", response_model=RunView)
     async def get_run(run_id: str) -> RunView:
         """Current state, projected from the event log."""
-        events = await app.state.harness.events(run_id)
+        events = await app.state.forge.events(run_id)
         if not events:
             raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
         state = project(events)
@@ -127,7 +128,7 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
         run_id: str, after_seq: int = Query(default=0, ge=0)
     ) -> list[dict[str, Any]]:
         """The durable audit trail. `after_seq` makes this pollable."""
-        events = await app.state.harness.events(run_id, after_seq=after_seq)
+        events = await app.state.forge.events(run_id, after_seq=after_seq)
         if not events and after_seq == 0:
             raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
         return [
@@ -144,7 +145,7 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
     @app.post("/runs/{run_id}/resume", status_code=202, response_model=RunAccepted)
     async def resume_run(run_id: str, background: BackgroundTasks) -> RunAccepted:
         """Continue an interrupted run. Idempotent: a finished run is a no-op."""
-        events = await app.state.harness.events(run_id)
+        events = await app.state.forge.events(run_id)
         if not events:
             raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
         state = project(events)
@@ -153,8 +154,8 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
 
         async def execute() -> None:
             try:
-                await app.state.harness.resume(run_id)
-            except BaseException as exc:  # noqa: BLE001
+                await app.state.forge.resume(run_id)
+            except BaseException as exc:
                 app.state.inflight[run_id] = f"{type(exc).__name__}: {exc}"
 
         background.add_task(execute)
@@ -162,7 +163,7 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
 
     @app.get("/runs/{run_id}/checkpoint")
     async def get_checkpoint(run_id: str) -> dict[str, Any]:
-        ckpt = await app.state.harness.checkpoint(run_id)
+        ckpt = await app.state.forge.checkpoint(run_id)
         if ckpt is None:
             raise HTTPException(status_code=404, detail="no checkpoint for this run")
         return {
@@ -177,7 +178,7 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
 
     @app.get("/healthz")
     async def healthz(response: Response) -> dict[str, Any]:
-        health = await app.state.harness.health()
+        health: dict[str, Any] = await app.state.forge.health()
         response.status_code = 200 if health["ok"] else 503
         return health
 
@@ -189,14 +190,14 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
     @app.get("/metrics")
     async def metrics() -> Response:
         return Response(
-            content=app.state.harness.metrics.render(),
+            content=app.state.forge.metrics.render(),
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
 
     @app.get("/policy")
     async def policy() -> dict[str, Any]:
         """What this deployment will and will not authorize."""
-        bundle = app.state.harness.policy
+        bundle = app.state.forge.policy
         return {
             "version": bundle.version,
             "budget": {
@@ -219,7 +220,8 @@ def create_app(config: ForgeConfig | None = None, *, harness: Harness | None = N
     @app.get("/config")
     async def get_config() -> dict[str, Any]:
         """Redacted effective configuration. Never includes secrets."""
-        return app.state.harness.config.describe()
+        described: dict[str, Any] = app.state.forge.config.describe()
+        return described
 
     return app
 

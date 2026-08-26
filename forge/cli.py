@@ -14,6 +14,7 @@ from typing import Annotated, Any
 import typer
 
 from forge.core.contracts import TaskSpec
+from forge.eval.cases import CaseSet, CaseSetError
 from forge.evaluation.benchmark import BenchmarkRunner
 from forge.evaluation.faults import FaultClass, FaultInjector
 from forge.evaluation.replay import replay_run
@@ -29,6 +30,12 @@ app = typer.Typer(
     add_completion=False,
     help="FORGE - a durable, policy-aware execution runtime for long-horizon AI agents.",
 )
+
+# `forge eval ...` - the evaluation harness. Kept in its own module because the
+# harness must not depend on the runtime CLI, only on the Target interface.
+from forge.eval.cli import app as eval_app  # noqa: E402
+
+app.add_typer(eval_app, name="eval")
 
 DEFAULT_DB = ".forge/forge.db"
 DEFAULT_POLICY = Path(__file__).parent / "security" / "policies" / "default.yaml"
@@ -340,7 +347,19 @@ def doctor() -> None:
 
         registry = build_default_registry()
         _echo(f"  tools registered                   {len(registry.names())}")
-        _echo("  cost ceiling                       $0.00 (policy-enforced)")
+
+        bundle = PolicyBundle.from_yaml(DEFAULT_POLICY)
+        granted = sum(1 for g in bundle.capabilities.values() if g.granted)
+        _echo(f"  policy bundle                      {bundle.version}")
+        _echo(f"  capabilities granted               {granted}/{len(bundle.capabilities)}")
+        _echo(f"  spend ceiling                      ${bundle.budget.max_usd:.2f} per run")
+
+        try:
+            cases = CaseSet.load("cases")
+            _echo(f"  case set                           {cases.version} "
+                  f"({len(cases)} cases)")
+        except (CaseSetError, OSError):
+            _echo("  case set                           not found in ./cases")
         _echo("")
         return 0
 

@@ -1,9 +1,9 @@
 """Provider-neutral model interface (spec §15).
 
-`Pricing` is not decoration. The trust plane reads `pricing.is_free` at
-dispatch time to decide whether a call needs the `PAID_INFERENCE` capability,
-which is how the $0.00 ceiling is enforced structurally rather than by
-remembering to be careful (docs/adr/0003-cost-is-a-capability.md).
+`Pricing` is not decoration. The gateway projects a call's cost from it and
+checks that against the run's remaining budget *before* the request is sent,
+so a run cannot discover it is over budget by having already gone over
+(docs/adr/0003-spend-and-capability-governance.md).
 """
 
 from __future__ import annotations

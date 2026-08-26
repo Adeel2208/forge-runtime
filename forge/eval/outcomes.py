@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-__all__ = ["Outcome", "RETRYABLE", "TERMINAL_FAILURES"]
+__all__ = ["RETRYABLE", "TERMINAL_FAILURES", "Outcome"]
 
 
 class Outcome(StrEnum):

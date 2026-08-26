@@ -49,8 +49,16 @@ jobs:
                  for k, v in data["summary"].items() if v["duplicate_effects"]}
           if bad:
               sys.exit(f"duplicate external effects detected: {bad}")
-          spend = sum(v["usd"] for v in data["summary"].values())
-          if spend > 0:
-              sys.exit(f"benchmark spent money: ${spend}")
-          print("0 duplicate effects, $0.00 spent")
+          print("0 duplicate effects across all fault classes")
           PY
+
+      # The harness must fail against deliberately broken targets before its
+      # green result on the real case set means anything.
+      - name: Harness meta-tests (negative fixtures)
+        run: pytest tests/eval -q
+
+      - name: Evaluation harness
+        run: |
+          python -m forge.cli eval validate cases/
+          python -m forge.cli eval run cases/ --target inprocess --out reports/ci-eval
+          cat reports/ci-eval/report.md >> "$GITHUB_STEP_SUMMARY"

@@ -25,13 +25,13 @@ from typing import Any, Protocol, runtime_checkable
 from forge.eval.cases import Case
 
 __all__ = [
+    "CallableTarget",
+    "CliTarget",
+    "HttpTarget",
+    "InProcessTarget",
     "Observation",
     "Target",
     "TargetUnavailable",
-    "InProcessTarget",
-    "HttpTarget",
-    "CliTarget",
-    "CallableTarget",
 ]
 
 
@@ -173,7 +173,7 @@ class InProcessTarget:
             db.unlink()
 
         base = self._config or ForgeConfig()
-        config = type(base)(  # type: ignore[call-arg]
+        config = type(base)(
             **{**base.__dict__, "database_url": f"sqlite:///{db}", "seed": seed}
         )
 
@@ -192,7 +192,7 @@ class InProcessTarget:
 
         started = time.monotonic()
         async with Forge(config=config, providers=providers) as forge:
-            runtime = forge._build_runtime()  # noqa: SLF001 - fault injection hook
+            runtime = forge._build_runtime()
             if injector is not None:
                 runtime.faults = injector
             from forge.core.contracts import TaskSpec
@@ -211,7 +211,7 @@ class InProcessTarget:
                     raise
                 runs = await forge.runs(limit=1)
                 run_id = str(runs[0]["run_id"]) if runs else ""
-                fresh = forge._build_runtime()  # noqa: SLF001
+                fresh = forge._build_runtime()
                 result = await fresh.resume(run_id)
 
             events = await forge.events(result.run_id)
@@ -279,7 +279,7 @@ class HttpTarget:
             resp = await self._client.get("/livez", headers=self._headers())
             if resp.status_code == 200:
                 self._version = str(resp.json().get("version", self._version))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise TargetUnavailable(f"cannot reach {self.base_url}: {exc}") from exc
 
     async def teardown(self) -> None:
@@ -291,8 +291,9 @@ class HttpTarget:
         if self._client is None:
             return False
         try:
-            return (await self._client.get("/livez", headers=self._headers())).status_code == 200
-        except Exception:  # noqa: BLE001
+            resp = await self._client.get("/livez", headers=self._headers())
+            return bool(resp.status_code == 200)
+        except Exception:
             return False
 
     async def execute(self, case: Case, *, seed: int) -> Observation:
@@ -304,7 +305,7 @@ class HttpTarget:
         if self._client is None:
             raise TargetUnavailable("target not set up")
 
-        payload = {"goal": case.goal, "tools": list(case.tools)}
+        payload: dict[str, Any] = {"goal": case.goal, "tools": list(case.tools)}
         if case.max_steps:
             payload["max_steps"] = case.max_steps
 

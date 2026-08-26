@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-__all__ = ["ForgeConfig", "ProviderConfig", "BudgetConfig", "TelemetryConfig"]
+__all__ = ["BudgetConfig", "ForgeConfig", "ProviderConfig", "TelemetryConfig"]
 
 ENV_PREFIX = "FORGE_"
 
@@ -140,10 +140,11 @@ class ForgeConfig:
             scalars["max_concurrent_runs"] = int(v)
 
         budget = self.budget
-        for key, cast in (
+        casts: tuple[tuple[str, Any], ...] = (
             ("MAX_USD", float), ("MAX_TOKENS", int), ("MAX_STEPS", int),
             ("MAX_TOOL_CALLS", int), ("MAX_WALL_CLOCK_S", float),
-        ):
+        )
+        for key, cast in casts:
             if v := env.get(f"{ENV_PREFIX}{key}"):
                 budget = replace(budget, **{key.lower(): cast(v)})
 

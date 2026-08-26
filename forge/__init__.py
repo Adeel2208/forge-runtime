@@ -38,6 +38,7 @@ __version__ = "0.2.0"
 from forge.config import BudgetConfig, ForgeConfig, ProviderConfig, TelemetryConfig
 from forge.core.contracts import Effect, Proposal, TaskSpec
 from forge.core.enums import Decision, Phase, RunStatus, SideEffect
+from forge.deployment import Forge
 from forge.errors import (
     BudgetExhausted,
     ForgeError,
@@ -45,11 +46,10 @@ from forge.errors import (
     ProviderUnavailable,
     UnrecoverableError,
 )
-from forge.deployment import Forge
 from forge.runtime.loop import RunResult
 from forge.tools.registry import ToolRegistry, ToolSpec
 
-__all__ = [
+__all__ = [  # noqa: RUF022 - grouped by concern, not alphabetised
     "__version__",
     # entry points
     "Forge",

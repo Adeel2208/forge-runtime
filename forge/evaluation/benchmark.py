@@ -163,7 +163,6 @@ class BenchmarkReport:
 
     def to_markdown(self) -> str:
         summary = self.by_fault()
-        total_usd = sum(row["usd"] for row in summary.values())
         lines = [
             "# FORGE failure-injection report",
             "",
@@ -171,7 +170,6 @@ class BenchmarkReport:
             f"- seed: `{self.seed}` (every trial is reproducible)",
             f"- generated: {self.started_at}",
             f"- trials: {len(self.results)}",
-            f"- **total spend: ${total_usd:.2f}**",
             "",
             "| Injected failure | Trials | Task success | Recovered | Contained "
             "| Dup effects | +Latency (ms) | +Tokens |",

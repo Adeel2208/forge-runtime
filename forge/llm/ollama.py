@@ -1,11 +1,12 @@
-"""Ollama adapter - Tier 1 of the zero-cost inference plan.
+"""Ollama adapter for a locally hosted model.
 
 Uses Ollama's native `/api/chat`, which supports a JSON-schema `format`
 parameter. That matters: structured-output enforcement at the provider is far
 more reliable than asking a 8B model politely and repairing the wreckage.
 
-`pricing` is zero because local inference is free, which is what lets the
-policy engine allow it under a $0.00 ceiling without a special case.
+`pricing` is zero because self-hosted inference has no per-token charge, so
+a local model is always affordable under any budget - which makes it a natural
+last entry in a failover chain.
 """
 
 from __future__ import annotations

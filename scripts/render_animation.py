@@ -154,7 +154,7 @@ class Scene:
     """(kicker, title, subtitle, colour) - drawn as a modal over a dimmed panel."""
     dead: bool = False
     counters: dict[str, Any] = field(default_factory=lambda: {
-        "performed": 0, "reused": 0, "duplicates": 0, "usd": 0.0,
+        "performed": 0, "reused": 0, "duplicates": 0, "committed": 0,
     })
     caption: str = ""
 
@@ -223,7 +223,7 @@ def _header(d: ImageDraw.ImageDraw, s: Scene) -> None:
     d.text((W - 358, 24), s.worker, font=F_LOG, fill=wcol)
 
     d.text((W - 268, 24), s.run_id, font=F_LOG, fill=INK_3)
-    d.text((W - 92, 24), "$0.0000", font=F_LOG, fill=ACCENT)
+    d.text((W - 96, 24), "default/1.1", font=F_LOG, fill=ACCENT)
     d.line((0, 52, W, 52), fill=LINE, width=1)
 
 
@@ -344,7 +344,7 @@ def _counters(d: ImageDraw.ImageDraw, s: Scene) -> None:
         ("effects reused", str(c["reused"]), GOLD if c["reused"] else INK_2),
         ("duplicate effects", str(c["duplicates"]),
          ACCENT if c["duplicates"] == 0 else CRIMSON),
-        ("total cost", f"${c['usd']:.4f}", ACCENT),
+        ("steps committed", str(c["committed"]), ACCENT),
     ]
     cw = (box[2] - box[0]) / len(cells)
     for i, (name, value, colour) in enumerate(cells):
@@ -406,7 +406,7 @@ def capture() -> dict[str, Any]:
             gateway=LLMGateway(providers=[MockProvider(script)], ledger=CostLedger()),
             registry=build_default_registry(),
             policy=PolicyEngine(
-                PolicyBundle.zero_cost(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
+                PolicyBundle.baseline(granted=["KNOWLEDGE_READ", "CALC", "WORKSPACE_WRITE"])
             ),
             config=RuntimeConfig(max_steps=10),
             faults=faults,
@@ -561,6 +561,7 @@ def storyboard(data: dict[str, Any]) -> list[tuple[Scene, int]]:
             case EventType.STEP_COMMITTED:
                 if s.step_no and s.step_no not in s.committed:
                     s.committed.append(s.step_no)
+                    s.counters["committed"] = len(s.committed)
             case EventType.CHECKPOINT_WRITTEN:
                 if s.step_no and s.step_no not in s.checkpoints:
                     s.checkpoints.append(s.step_no)
@@ -575,10 +576,10 @@ def storyboard(data: dict[str, Any]) -> list[tuple[Scene, int]]:
     # ── closing card ────────────────────────────────────────────────────
     s.active_phase = None
     s.counters["duplicates"] = result.duplicate_effects
-    s.counters["usd"] = result.usage.usd
+    s.counters["committed"] = len(s.committed)
     s.banner = (
         "run complete",
-        "0 duplicate effects  \u00b7  $0.0000",
+        "0 duplicate effects",
         "Crashed mid-write, resumed, finished. Nothing happened twice.",
         ACCENT,
     )

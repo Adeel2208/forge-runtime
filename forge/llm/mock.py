@@ -5,8 +5,9 @@ at all forces the gateway abstraction to be honest: there is no opportunity to
 leak an HTTP client, a vendor field name, or a network assumption into the
 runtime, because there is nothing to leak it from.
 
-It also makes ~85% of the project buildable and benchmarkable at zero cost -
-every unit, integration, recovery, adversarial and benchmark run uses this.
+It is also what makes the test suite hermetic: every unit, integration,
+recovery, adversarial and evaluation run executes against a fixed script, so a
+failure is a fact about the code rather than about today's model weights.
 """
 
 from __future__ import annotations

@@ -35,7 +35,7 @@ from forge.eval.targets import (
     TargetUnavailable,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 - grouped by concern, not alphabetised
     # cases
     "Case",
     "CaseSet",

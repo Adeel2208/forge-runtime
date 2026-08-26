@@ -24,7 +24,7 @@ from typing import Any
 from forge.eval.graders import Grade
 from forge.eval.outcomes import Outcome
 
-__all__ = ["CaseRecord", "RunManifest", "ResultSet"]
+__all__ = ["CaseRecord", "ResultSet", "RunManifest"]
 
 
 @dataclass

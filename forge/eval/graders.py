@@ -24,7 +24,7 @@ from typing import Any, Protocol, runtime_checkable
 from forge.eval.cases import Case
 from forge.eval.targets import Observation
 
-__all__ = ["Grade", "Grader", "GRADERS", "build_grader", "register_grader", "grade_all"]
+__all__ = ["GRADERS", "Grade", "Grader", "build_grader", "grade_all", "register_grader"]
 
 
 @dataclass
@@ -180,7 +180,7 @@ class JsonSchemaGrader:
 def _check_schema(value: Any, schema: dict[str, Any], *, path: str) -> list[str]:
     problems: list[str] = []
     expected = schema.get("type")
-    types = {
+    types: dict[str, Any] = {
         "object": dict, "array": list, "string": str,
         "number": (int, float), "integer": int, "boolean": bool,
     }
@@ -386,7 +386,7 @@ class LlmJudgeGrader:
         )
         try:
             response = await self.provider.complete(request)
-        except Exception as exc:  # noqa: BLE001 - judge failure is not a target failure
+        except Exception as exc:
             return Grade(
                 kind=self.kind, passed=False, applicable=False,
                 reason=f"judge unavailable: {type(exc).__name__}: {exc}",

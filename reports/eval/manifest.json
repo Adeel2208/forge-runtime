@@ -1,0 +1,17 @@
+{
+  "started_at": "2026-08-26T09:04:16+00:00",
+  "finished_at": "2026-08-26T09:04:17+00:00",
+  "case_set_version": "1.0.0",
+  "case_set_source": "cases",
+  "suite": "agent-core",
+  "target_name": "inprocess",
+  "target_version": "forge/0.2.0",
+  "harness_version": "0.2.0",
+  "seed": 1729,
+  "python": "3.11.0",
+  "platform": "Windows-10-10.0.26200",
+  "total": 10,
+  "counts": {
+    "PASSED": 10
+  }
+}

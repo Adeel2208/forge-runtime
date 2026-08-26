@@ -10,8 +10,6 @@ These are the tests that make the other tests worth trusting.
 
 from __future__ import annotations
 
-import pytest
-
 from forge.eval import (
     CallableTarget,
     CaseSet,
@@ -36,11 +34,11 @@ CASES = {
 }
 
 
-def _case_set(**overrides) -> CaseSet:  # noqa: ANN003
+def _case_set(**overrides) -> CaseSet:
     return CaseSet.from_dict({**CASES, **overrides}, source="<meta>")
 
 
-def _target(fn, **kw):  # noqa: ANN001, ANN003
+def _target(fn, **kw):
     return CallableTarget(fn, **kw)
 
 
@@ -50,7 +48,7 @@ def _target(fn, **kw):  # noqa: ANN001, ANN003
 def test_wrong_answer_is_an_assertion_failure() -> None:
     """The headline negative fixture: a target that answers incorrectly."""
 
-    async def wrong(case, seed):  # noqa: ANN001
+    async def wrong(case, seed):
         return Observation(answer="goodbye", status="COMPLETED")
 
     results = run(Harness(_case_set(), _target(wrong, name="wrong")).run())
@@ -63,7 +61,7 @@ def test_wrong_answer_is_an_assertion_failure() -> None:
 
 
 def test_a_target_that_answers_nothing_fails() -> None:
-    async def empty(case, seed):  # noqa: ANN001
+    async def empty(case, seed):
         return Observation(answer=None, status="COMPLETED")
 
     results = run(Harness(_case_set(), _target(empty, name="empty")).run())
@@ -73,7 +71,7 @@ def test_a_target_that_answers_nothing_fails() -> None:
 def test_a_target_that_never_terminates_correctly_fails() -> None:
     """Right text, wrong terminal state. Both assertions must be evaluated."""
 
-    async def half_right(case, seed):  # noqa: ANN001
+    async def half_right(case, seed):
         return Observation(answer="hello there", status="FAILED")
 
     results = run(Harness(_case_set(), _target(half_right, name="half")).run())
@@ -87,7 +85,7 @@ def test_a_target_that_never_terminates_correctly_fails() -> None:
 def test_a_case_with_no_expectations_cannot_pass() -> None:
     """An assertion-free case is a hole in the suite, not a free pass."""
 
-    async def anything(case, seed):  # noqa: ANN001
+    async def anything(case, seed):
         return Observation(answer="whatever", status="COMPLETED")
 
     bare = CaseSet.from_dict(
@@ -105,7 +103,7 @@ def test_a_case_with_no_expectations_cannot_pass() -> None:
 def test_unreachable_target_is_not_an_assertion_failure() -> None:
     """Infra is not a verdict. This distinction is the whole point."""
 
-    async def unreachable(case, seed):  # noqa: ANN001
+    async def unreachable(case, seed):
         raise TargetUnavailable("connection refused")
 
     results = run(
@@ -124,7 +122,7 @@ def test_unreachable_target_is_not_an_assertion_failure() -> None:
 def test_an_unclassified_adapter_exception_is_a_harness_bug() -> None:
     """An adapter that raises something it did not classify blames itself."""
 
-    async def buggy(case, seed):  # noqa: ANN001
+    async def buggy(case, seed):
         raise ValueError("adapter forgot to translate this")
 
     results = run(Harness(_case_set(), _target(buggy, name="buggy")).run())
@@ -134,7 +132,7 @@ def test_an_unclassified_adapter_exception_is_a_harness_bug() -> None:
 def test_a_broken_grader_is_a_harness_bug_not_a_target_failure() -> None:
     from forge.eval.graders import register_grader
 
-    def explode(value, **kw):  # noqa: ANN001, ANN003
+    def explode(value, **kw):
         raise RuntimeError("grader is broken")
 
     register_grader("exploding", explode)
@@ -143,7 +141,7 @@ def test_a_broken_grader_is_a_harness_bug_not_a_target_failure() -> None:
         "expect": [{"type": "exploding", "value": 1}],
     }])
 
-    async def fine(case, seed):  # noqa: ANN001
+    async def fine(case, seed):
         return Observation(answer="hello", status="COMPLETED")
 
     results = run(Harness(cases, _target(fine)).run())
@@ -153,7 +151,7 @@ def test_a_broken_grader_is_a_harness_bug_not_a_target_failure() -> None:
 def test_a_slow_target_times_out_rather_than_hanging() -> None:
     import asyncio
 
-    async def slow(case, seed):  # noqa: ANN001
+    async def slow(case, seed):
         await asyncio.sleep(5)
         return Observation(answer="hello", status="COMPLETED")
 
@@ -172,7 +170,7 @@ def test_assertion_failures_are_never_retried() -> None:
     """Re-rolling a failed assertion is sampling until you like the answer."""
     calls = {"n": 0}
 
-    async def wrong(case, seed):  # noqa: ANN001
+    async def wrong(case, seed):
         calls["n"] += 1
         return Observation(answer="goodbye", status="COMPLETED")
 
@@ -189,7 +187,7 @@ def test_assertion_failures_are_never_retried() -> None:
 def test_infra_failures_are_retried() -> None:
     calls = {"n": 0}
 
-    async def flaky(case, seed):  # noqa: ANN001
+    async def flaky(case, seed):
         calls["n"] += 1
         if calls["n"] < 3:
             raise TargetUnavailable("still starting up")
@@ -216,7 +214,7 @@ def test_setup_failure_does_not_look_like_a_suite_of_wrong_answers() -> None:
         async def setup(self) -> None:
             raise TargetUnavailable("service is down")
 
-        async def execute(self, case, *, seed):  # noqa: ANN001, ANN003
+        async def execute(self, case, *, seed):
             raise AssertionError("must never execute")
 
         async def teardown(self) -> None:
@@ -233,7 +231,7 @@ def test_setup_failure_does_not_look_like_a_suite_of_wrong_answers() -> None:
 def test_a_check_that_cannot_run_fails_rather_than_passing_silently() -> None:
     """No trajectory means the trajectory check did not happen. That is not green."""
 
-    async def no_trajectory(case, seed):  # noqa: ANN001
+    async def no_trajectory(case, seed):
         return Observation(answer="hello", status="COMPLETED", events=[])
 
     cases = _case_set(cases=[{
@@ -250,7 +248,7 @@ def test_a_check_that_cannot_run_fails_rather_than_passing_silently() -> None:
 
 
 def test_skipped_cases_are_recorded_and_do_not_confer_green() -> None:
-    async def never(case, seed):  # noqa: ANN001
+    async def never(case, seed):
         raise AssertionError("skipped case must not execute")
 
     cases = _case_set(cases=[{
