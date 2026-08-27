@@ -139,3 +139,17 @@ class EventType(StrEnum):
     ERROR_RAISED = "ERROR_RAISED"
     RETRY_SCHEDULED = "RETRY_SCHEDULED"
     LOOP_DETECTED = "LOOP_DETECTED"
+
+    # -- knowledge layer (docs/adr/0007) ----------------------------------
+    # Shared knowledge between runs. These live in the same log and use the
+    # same idempotency index as everything above; `project()` ignores them,
+    # and `forge.knowledge.projection` folds them separately. Adding members
+    # is safe in both directions because both folds are total.
+    NOTE_PROPOSED = "NOTE_PROPOSED"
+    ATTESTATION_RECORDED = "ATTESTATION_RECORDED"
+    ATTESTATION_RETRACTED = "ATTESTATION_RETRACTED"
+    NOTE_QUARANTINED = "NOTE_QUARANTINED"
+    NOTE_RELEASED = "NOTE_RELEASED"
+    NOTES_MERGED = "NOTES_MERGED"
+    NOTE_REANCHORED = "NOTE_REANCHORED"
+    ADVERSARIAL_RETEST_RECORDED = "ADVERSARIAL_RETEST_RECORDED"
