@@ -29,6 +29,13 @@ class CapabilityGrant:
         default_factory=lambda: frozenset({SideEffect.READ})
     )
     requires_approval: bool = False
+    requires_isolation: str = "none"
+    """Minimum sandbox tier: none | confined | container.
+
+    A capability that needs containment stays denied on a machine that cannot
+    provide it. Silently running under weaker isolation than the policy author
+    specified is the failure mode this exists to prevent.
+    """
 
     def permits(self, side_effect: SideEffect) -> bool:
         return self.granted and side_effect in self.allowed_effects

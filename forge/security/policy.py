@@ -27,6 +27,12 @@ __all__ = ["PolicyBundle", "PolicyEngine"]
 
 _EFFECT_BY_NAME = {e.value: e for e in SideEffect}
 
+# Isolation tiers as ranks, so "at least this much" is a comparison. Kept as
+# plain data rather than importing forge.sandbox: the trust plane must not
+# depend on the sandbox implementation to decide what it requires.
+_ISOLATION_RANK: dict[str, int] = {"none": 0, "confined": 1, "container": 2}
+_ISOLATION_NAME: dict[int, str] = {v: k for k, v in _ISOLATION_RANK.items()}
+
 
 class PolicyBundle:
     """A versioned set of grants and limits.
@@ -90,6 +96,7 @@ class PolicyBundle:
                 max_invocations=spec.get("max_invocations"),
                 allowed_effects=frozenset(_EFFECT_BY_NAME[e] for e in effects),
                 requires_approval=bool(spec.get("requires_approval", False)),
+                requires_isolation=str(spec.get("requires_isolation", "none")).lower(),
             )
         budget_spec = raw.get("budget") or {}
         budget = Budget(
@@ -111,8 +118,11 @@ class PolicyBundle:
 class PolicyEngine:
     """Evaluates one proposed tool action against a bundle. Deny by default."""
 
-    def __init__(self, bundle: PolicyBundle) -> None:
+    def __init__(self, bundle: PolicyBundle, *, available_isolation: str = "confined") -> None:
         self.bundle = bundle
+        self.available_isolation = _ISOLATION_RANK.get(available_isolation.lower(), 0)
+        """What this machine can actually provide. Set from the selected
+        sandbox at startup; capabilities requiring more stay denied."""
 
     @property
     def version(self) -> str:
@@ -179,7 +189,22 @@ class PolicyEngine:
         except BudgetExhausted as exc:
             return self._deny(exc.reason or exc.message, capability=spec.capability, risk=spec.risk)
 
-        # 7. Human approval for irreversible effects - unless this is a dry run,
+        # 7. Isolation floor. Checked before approval on purpose: insufficient
+        #    containment is a harder "no" than a missing signature, and a human
+        #    should never be asked to approve running something under weaker
+        #    isolation than the policy author specified.
+        required = _ISOLATION_RANK.get(grant.requires_isolation, 0)
+        if required > self.available_isolation:
+            available = _ISOLATION_NAME.get(self.available_isolation, "none")
+            return self._deny(
+                f"capability {spec.capability!r} requires "
+                f"{grant.requires_isolation!r} isolation; this machine provides "
+                f"{available!r}",
+                capability=spec.capability,
+                risk=RiskClass.HIGH,
+            )
+
+        # 8. Human approval for irreversible effects - unless this is a dry run,
         #    which by definition produces no effect to approve.
         needs_approval = (
             spec.side_effect in self.bundle.require_approval_for or grant.requires_approval
