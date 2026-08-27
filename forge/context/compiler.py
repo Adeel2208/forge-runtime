@@ -61,7 +61,10 @@ class ContextCompiler:
         "- Never repeat a tool call that already appears in OBSERVATIONS.\n"
         "- Never retry a call listed in PREVIOUS FAILURES with identical arguments.\n"
         "- rationale_summary is a public summary, not private reasoning.\n"
-        "- When you have enough information, answer. Do not pad with extra calls."
+        "- When you have enough information, answer. Do not pad with extra calls.\n"
+        "- Never state a result you did not observe. If a tool has not run, its "
+        "result is not yours to report.\n"
+        "- A goal with several parts is not finished until every part is done."
     )
 
     def __init__(self, *, token_budget: int = 3000, max_observations: int = 8) -> None:
@@ -140,9 +143,43 @@ class ContextCompiler:
         if budget_note:
             sections.append(Section("budget", 50, f"# BUDGET\n{budget_note}"))
 
-        sections.append(
-            Section("instruction", 60, "# NOW\nPropose exactly one next operation as JSON.")
-        )
+        # The closing instruction is the last thing the model reads before it
+        # generates, which makes it the most valuable real estate in the
+        # prompt. A generic "propose one operation" spends it on nothing.
+        #
+        # Once there are observations, the live question is no longer "what
+        # tool next" but "am I finished". Naming the work already done, and
+        # putting ANSWER first, is what stops a model looping past a completed
+        # task - measured against five local models, that loop was the cause
+        # of every failure, and three of them had finished the work two steps
+        # before the run was killed.
+        if state.observations:
+            done = ", ".join(
+                dict.fromkeys(str(o.get("tool")) for o in state.observations if o.get("tool"))
+            )
+            sections.append(
+                Section(
+                    "instruction",
+                    60,
+                    "# NOW - DECIDE\n"
+                    f"You have already run: {done}.\n"
+                    "Re-read the GOAL. It may ask for more than one thing.\n"
+                    "- If EVERY part of the GOAL is satisfied by OBSERVATIONS, reply "
+                    '{"kind": "ANSWER", "answer": "..."}.\n'
+                    "- If any part is still not done, propose the ONE tool call that "
+                    "does the next unfinished part.\n"
+                    "- Do not repeat a call already listed in OBSERVATIONS.\n"
+                    "Reply with a single JSON object.",
+                )
+            )
+        else:
+            sections.append(
+                Section(
+                    "instruction",
+                    60,
+                    "# NOW\nPropose exactly one next operation as a single JSON object.",
+                )
+            )
         return sections
 
     @staticmethod
@@ -168,7 +205,12 @@ class ContextCompiler:
             output = str(obs.get("output"))
             if len(output) > 600:
                 output = output[:600] + "...[truncated]"
-            lines.append(f"- step {obs.get('step')} {obs.get('tool')} -> {output}")
+            # A suppressed duplicate reads exactly like a fresh success unless
+            # it is labelled, so a model that has lost track gets no signal
+            # that it is going in circles - which is precisely how these runs
+            # were dying.
+            mark = " [ALREADY DONE - you repeated this]" if obs.get("reused") else ""
+            lines.append(f"- step {obs.get('step')} {obs.get('tool')}{mark} -> {output}")
         return "\n".join(lines)
 
     @staticmethod

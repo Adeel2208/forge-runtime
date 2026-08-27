@@ -182,6 +182,7 @@ class AgentRuntime:
         self.permits = PermitBook()
         self.retry = RetryPolicy()
         self.detector = LoopDetector()
+        self._loop_warned = False
         self._rng = random.Random(self.config.seed)
         self._duplicates = 0
         self._last_seq = 0
@@ -254,6 +255,7 @@ class AgentRuntime:
         # Rebuild loop-detector history so a crash does not reset the bound -
         # otherwise "crash and resume" would be a way to loop forever.
         self.detector.fingerprints = list(state.action_fingerprints)
+        self._loop_warned = False
 
         await self._emit(
             EventType.RUN_RESUMED,
@@ -541,13 +543,46 @@ class AgentRuntime:
             mutating=action.side_effect is not SideEffect.READ,
         )
         if signal:
+            # Warn once, then halt. Measured against five local models, every
+            # single failure was this: the model finished the actual work and
+            # then could not stop, repeating a completed call until the bound
+            # killed the run. Halting on the first repeat turns a recoverable
+            # stumble into a failed run without ever telling the model what it
+            # did wrong - and a model that is never told cannot correct.
+            #
+            # The bound is not weakened. The fingerprint is already recorded,
+            # so a model that repeats again trips immediately and halts. This
+            # buys exactly one corrective turn.
+            warn = not self._loop_warned
             await self._emit(
                 EventType.LOOP_DETECTED,
                 run.id,
                 step_id=step_id,
                 step_index=state.step_index,
-                payload={"kind": signal.kind, "detail": signal.detail},
+                payload={
+                    "kind": signal.kind,
+                    "detail": signal.detail,
+                    "action": "warned" if warn else "halted",
+                },
             )
+            if warn:
+                self._loop_warned = True
+                await self._emit(
+                    EventType.PROPOSAL_REJECTED,
+                    run.id,
+                    step_id=step_id,
+                    step_index=state.step_index,
+                    payload={
+                        "error": (
+                            f"You proposed {action.tool} again with arguments that were "
+                            "already used. It is done, and its result is in OBSERVATIONS. "
+                            "Do not call it again. If the GOAL is already satisfied by "
+                            'what you have, reply now with {"kind": "ANSWER", ...}.'
+                        )
+                    },
+                )
+                phase = await self._goto(run.id, phase, Phase.EVALUATE, state.step_index)
+                return await self._continue(run, state, phase)
             raise LoopDetected(signal.detail, kind=signal.kind)
 
         # -- DISPATCH / OBSERVE / RECONCILE, with bounded retries ------------

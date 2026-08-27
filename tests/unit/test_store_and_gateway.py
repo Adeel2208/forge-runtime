@@ -181,7 +181,9 @@ def test_projection_folds_effects_into_observations() -> None:
     state = project(events)
     assert state.goal == "g"
     assert state.steps_committed == 1
-    assert state.observations == [{"step": 1, "tool": "t", "output": "o"}]
+    assert state.observations == [
+        {"step": 1, "tool": "t", "output": "o", "reused": False}
+    ]
     assert "k1" in state.completed_effects
 
 

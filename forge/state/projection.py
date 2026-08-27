@@ -146,6 +146,9 @@ def project(events: list[Event], base: RunState | None = None) -> RunState:
                             "step": ev.step_index,
                             "tool": payload.get("tool"),
                             "output": payload.get("output"),
+                            # A suppressed duplicate and a fresh success look
+                            # identical to the model unless we say otherwise.
+                            "reused": ev.type is EventType.EFFECT_REUSED,
                         }
                     )
                 else:
