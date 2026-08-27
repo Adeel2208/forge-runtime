@@ -178,16 +178,49 @@ It also pins two behaviours that regress into silent passes easily:
 
 ## Quick start
 
-Python 3.11+. No database to start, no API key required to run the suite.
+Python 3.11+. No database to set up, no API key needed to see it work.
 
 ```bash
-pip install -e ".[dev]"
+pip install forge-runtime            # or: pip install -e ".[dev]"
 
-python -m forge.cli demo              # run, kill the worker, resume, prove no duplicate effects
-forge eval validate cases/            # check the case set loads and every grader exists
-forge eval run cases/                 # execute the suite, write records + report
-pytest                                # 181 tests, no network, no services
+forge demo                           # kill a worker mid-write, resume, 0 duplicate effects
 ```
+
+Then start your own project:
+
+```bash
+mkdir myagent && cd myagent
+forge init                           # scaffolds forge.toml, tools.py, policy.yaml, cases/
+forge doctor                         # tells you exactly what still needs setting up
+
+# point it at a model - a local one is enough
+ollama serve &
+forge run "Save a note called shopping containing 'milk and eggs'."
+forge eval run cases/                # check it behaves
+```
+
+`forge init` gives you a working project, not a blank directory: three example
+tools spanning all three side-effect classes, a policy bundle that grants two
+of them and refuses the third, and three starter cases. Replace them with
+yours.
+
+`forge doctor` reads the same config the runtime does, so what it reports is
+what would actually run:
+
+```
+  config              forge.toml
+  model               ollama/qwen3:8b  reachable
+  tools               3 from tools:registry
+  policy              myapp/1.0.0 from policy.yaml
+  capabilities        3/4 granted
+  spend ceiling       $5.00 per run
+  case set            0.1.0  (3 cases)
+
+  ready
+```
+
+If no model is configured, `forge run` **refuses** rather than returning
+something that looks like an answer.
 
 Serve it:
 
@@ -306,6 +339,190 @@ forge/
 cases/           the case set, as data
 docs/adr/        why the load-bearing decisions are what they are
 ```
+
+## Using it
+
+Type `forge` in a repository:
+
+```
+FORGE  interactive coding session
+------------------------------------------------------------------
+  repo          C:\work\myproject
+  branch        main  clean
+  model         ollama/qwen3:8b
+  sandbox       confined
+  policy        coding/1.1.0
+
+  /help for commands. Nothing merges into your branch unless you /accept it.
+
+> add a subtract function to src/calc.py
+
+  . list_files    src/
+  . read_file     src/calc.py
+  . edit_file     src/calc.py
+
+  status        completed
+  files         src/calc.py
+  branch        forge/code_81ab643  (1 commits)
+
+  Added the subtract function to src/calc.py
+
+  /diff to review | /accept to keep | /undo to discard
+
+> /diff
+  ...
+> /accept
+  merged forge/code_81ab643
+```
+
+| | |
+|---|---|
+| `/diff` | what the last task changed |
+| `/accept` | merge it into your branch |
+| `/undo` | delete the branch; your work is untouched |
+| `/status` `/policy` | repo, model, sandbox; what the agent may and may not do |
+| `/trace` `/history` | the event log for a run; tasks this session |
+
+`/policy` reports the **effective** state, not the declared one — a capability
+granted in YAML but blocked by insufficient isolation shows as `BLOCKED` with
+the reason, because a display that says "granted" about something that will be
+denied is worse than no display.
+
+Irreversible actions stop and ask. The prompt **defaults to no**: an operator
+who hits return without reading should get the safe outcome.
+
+Quitting with unmerged work tells you which branches are waiting. One-shot
+still works: `forge code "task"`.
+
+## The coding agent
+
+A coding agent for local models, where safety comes from the runtime rather
+than from trusting the model.
+
+```bash
+cd your-repo
+forge code "add a --verbose flag to the CLI"
+forge code review        # what did it change?
+forge code discard       # throw it away
+```
+
+**Read this before the feature list.** A local 8B model is not close to a
+frontier model at agentic coding. It will lose track, repeat itself, and fail
+multi-file tasks. What FORGE changes is not how clever it is — it is how much
+a mistake costs:
+
+| | |
+|---|---|
+| **Your branch is never touched** | Every run works on `forge/<run_id>`, branched from a clean tree |
+| **Every step is a commit** | The agent's history is `git log`, reviewable with tools you already have |
+| **Edits are compensated** | `edit_file` is a `REVERSIBLE_WRITE` whose undo is a git restore |
+| **It cannot leave the repo** | Paths are resolved before checking; symlinks, `..`, and absolute escapes all refused |
+| **It cannot read your secrets** | `.env`, keys and `.git/` are invisible — a file it cannot read is one it cannot leak |
+| **It cannot run shell commands** | `SHELL` is declared and ungranted; there is no sandbox yet, and `rm -rf` is not undone by git |
+| **Loops are bounded** | Two identical edits stops the run, before a third copy lands in the file |
+
+Discarding a whole run is one command. That is the honest answer to "how do I
+trust a small model with my code": you don't — you review a branch.
+
+### What it does for local models specifically
+
+- **A repo map, not a file dump.** Paths plus top-level symbols, so the model
+  picks a file instead of burning its context on source it never asked for.
+- **One operation per step.** Small models fall apart on parallel tool calls;
+  FORGE's proposal model was already one-at-a-time.
+- **It absorbs predictable mistakes.** `read_file` shows a `  12| ` gutter and
+  models copy it back into `old_text`. Telling them not to doesn't work, so
+  the runtime strips it and retries — and records that it did.
+- **It refuses already-applied edits.** A model that loses track re-inserts
+  the same function; each insertion "succeeds", and you end up with three
+  copies and a green test suite.
+
+Every one of those was found by running `qwen3:8b` against a real repository,
+not by reading the code.
+
+### Honest results
+
+`qwen3:8b`, "add a `subtract` function and a test for it":
+
+```
+    list_files  .          read_file  src/calc.py          edit_file  src/calc.py
+  status    FAILED (loop detected after 2 identical edits)
+  commits   1
+  files     src/calc.py
+```
+
+It got the function right and committed it. It never reached the test file,
+then repeated itself until the runtime stopped it. **The correct change is on
+a branch; nothing is corrupted; discarding costs one command.** That is the
+realistic outcome today, and it is why the git safety net is the feature
+rather than a nicety.
+
+For harder tasks, point the same agent at a stronger model — the provider
+chain is config, and nothing above it changes.
+
+## The sandbox
+
+Sandboxing is where security claims get overstated, so isolation is a
+first-class value that a sandbox **declares** and policy can **require**.
+
+| Tier | Enforces | Contains hostile code? |
+|---|---|:---:|
+| `NONE` | nothing — runs in the runtime process | no |
+| `CONFINED` | no shell, scrubbed environment, confined cwd, wall-clock and output ceilings, OS resource caps, guaranteed tree-kill | **no** |
+| `CONTAINER` | filesystem, network, PID and user namespaces; memory and CPU limits; non-root; read-only rootfs; dropped capabilities | yes |
+
+`CONFINED` bounds **accidents and runaway resource use**. It does not stop a
+program that wants to read your home directory — that needs `CONTAINER`. The
+distinction is asserted in the test suite, including a test that verifies
+`CONFINED` genuinely *does not* isolate the filesystem, so nobody can mistake
+the boundary.
+
+### Policy requires a tier; it does not assume one
+
+```yaml
+SHELL:
+  granted: true
+  requires_approval: true
+  requires_isolation: container   # denied outright if unavailable
+```
+
+On a machine with no container runtime:
+
+```
+isolation=confined    run_command -> DENY: capability 'SHELL' requires
+                                     'container' isolation; this machine
+                                     provides 'confined'
+isolation=container   run_command -> REQUIRE_APPROVAL
+```
+
+No judgement call, no forgetting. `select_sandbox` **refuses rather than
+degrading** — silently dropping to a weaker tier is how a system ends up
+running untrusted code under isolation its author never agreed to.
+
+### It costs essentially nothing
+
+A sandbox people disable because it's slow protects nobody. `CONFINED` is a
+child process plus a few syscalls — a test asserts the overhead stays within
+a small multiple of a bare `subprocess.run`. `CONTAINER` costs ~200–600ms of
+container start per command, which is the honest price of real isolation and
+why the tier is selected rather than assumed.
+
+On Windows the backend is a **Job Object** (kernel-enforced memory and process
+caps, plus `KILL_ON_JOB_CLOSE` so the whole tree dies with the job even if the
+runtime crashes); on Unix, rlimits. `forge doctor` reports which is active:
+
+```
+  selected sandbox : local / confined     backend: job-object
+  enforces         : no shell, scrubbed env, confined cwd, wall-clock timeout,
+                     output ceiling, process-tree kill, job-object memory cap,
+                     job-object process cap, kill-on-close
+  does NOT enforce : filesystem isolation, network isolation, privilege separation
+```
+
+**Secrets never reach a sandboxed command.** The environment is rebuilt from an
+allow-list — a deny-list of secret-looking names loses the first time someone
+invents a new prefix — and even an explicitly passed-through name is dropped if
+it matches a credential pattern.
 
 ## Operations
 

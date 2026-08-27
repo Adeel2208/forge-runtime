@@ -1,0 +1,68 @@
+# Policy for the coding agent.
+#
+# The shape of this bundle is the argument for letting a small local model
+# touch your repository at all: it may read freely, it may edit files (every
+# edit reversible via git), and it may not run arbitrary commands or push.
+#
+# Deny-by-default. A capability not listed here is not granted.
+version: coding/1.1.0
+
+budget:
+  usd_ceiling: 5.00        # zero for a local model; a real ceiling if you route to a hosted one
+  tokens_per_run: 400000   # coding is read-heavy
+  wall_clock_seconds: 3600
+  max_steps: 40            # read, edit, test, read failure, edit again is already five
+  max_tool_calls: 60
+
+capabilities:
+
+  INFERENCE:
+    granted: true
+    allowed_effects: [READ]
+
+  # Reading the repository is unrestricted. The workspace layer already
+  # refuses paths outside the project, .git internals, and secrets.
+  CODE_READ:
+    granted: true
+    allowed_effects: [READ]
+
+  # Edits are granted but reversible: each is compensated by a git restore,
+  # and each committed step becomes a commit on a scratch branch.
+  CODE_WRITE:
+    granted: true
+    max_invocations: 40
+    allowed_effects: [READ, REVERSIBLE_WRITE]
+
+  # The feedback loop. Gating this behind approval would make the agent
+  # unable to check its own work, which is worse than useless.
+  # The test suite runs in the sandbox too. CONFINED is the floor: no shell,
+  # scrubbed environment, capped memory and wall clock, tree-kill on timeout.
+  CODE_TEST:
+    granted: true
+    requires_isolation: confined
+    allowed_effects: [READ]
+
+  # Arbitrary command execution. Granted, but gated on real containment:
+  # `requires_isolation: container` means that on a machine without a
+  # container runtime this stays denied automatically, with a reason naming
+  # the tier it wanted. Confinement is not containment - running arbitrary
+  # commands under CONFINED would be trusting the model, which is the one
+  # thing this system is built not to do.
+  SHELL:
+    granted: true
+    requires_approval: true
+    requires_isolation: container
+    allowed_effects: [IRREVERSIBLE_WRITE]
+
+  # Pushing leaves the machine and cannot be taken back.
+  GIT_PUSH:
+    granted: false
+    requires_approval: true
+    allowed_effects: [IRREVERSIBLE_WRITE]
+
+require_approval_for:
+  - IRREVERSIBLE_WRITE
+
+on_denial:
+  action: fallback
+  log: policy_decision

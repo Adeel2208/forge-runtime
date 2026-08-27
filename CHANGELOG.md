@@ -7,6 +7,115 @@ Anything exported from the top-level `forge` package is public API and covered
 by the version guarantee. Anything reached through a submodule path is
 internal and may change in a minor release.
 
+## [0.6.0] - 2026-08-27
+
+### Added
+
+- **Interactive session** — `forge` with no arguments. Describe a task in
+  plain language, watch each tool call as it happens, then `/diff`, `/accept`
+  or `/undo`. Slash commands for `/status`, `/policy`, `/trace` and
+  `/history`. Built on stdlib ANSI, so the dependency list stays at four.
+- **The approval gate finally reaches a human.** The runtime could always
+  return `REQUIRE_APPROVAL`, but every entry point until now either
+  auto-approved or refused. A session is where a person is actually present,
+  so that is where it is answered — defaulting to **no**, because an operator
+  who hits return without reading should get the safe outcome.
+- `/accept` merges the run's branch; `/undo` deletes it. Nothing reaches your
+  branch unless you say so, and quitting with unmerged work tells you where
+  it is rather than leaving a branch you never learn about.
+
+### Changed
+
+- The sandbox is selected once per session rather than per run, so the banner
+  and `/policy` report the tier that will actually apply. A capability granted
+  in YAML but blocked by insufficient isolation now displays as **BLOCKED**
+  with the reason, instead of reading as granted — the same class of
+  confident-but-wrong display as a CLI that answers without a model.
+
+### Fixed
+
+- UI glyphs are ASCII. `✓` and `─` are unencodable in cp1252 and would have
+  raised `UnicodeEncodeError` part-way through rendering on a default Windows
+  console.
+- The session prompt reads input on a worker thread; a blocking `input()`
+  held the event loop for as long as the user was thinking.
+
+## [0.5.0] - 2026-08-27
+
+### Added
+
+- **Sandbox** (`forge.sandbox`) with three declared tiers — `NONE`,
+  `CONFINED`, `CONTAINER` — where each states what it enforces *and what it
+  does not*. `CONFINED` gives no shell, a scrubbed environment, a confined
+  working directory, wall-clock and output ceilings, OS-enforced resource caps
+  (Windows Job Objects, Unix rlimits) and guaranteed process-tree kill.
+  `CONTAINER` adds filesystem, network, PID and user isolation.
+- **Policy requires a minimum tier.** `requires_isolation` on a capability
+  grant is compared against what the machine actually provides, so `SHELL`
+  stays denied where there is no container runtime — automatically, with a
+  reason naming the tier it wanted. `select_sandbox` refuses rather than
+  silently degrading.
+- **Environment scrubbing** built on an allow-list, so a command never sees a
+  token it could leak, log or commit. Even an explicitly passed-through name
+  is dropped if it matches a credential pattern.
+- Every command the coding agent runs — `run_tests` included — now goes
+  through the sandbox. There is one execution call site to audit.
+
+### Notes
+
+`CONFINED` bounds accidents and runaway resource use. It does **not** contain
+a program actively trying to escape; the test suite asserts this explicitly
+rather than leaving it implied, including a test verifying that `CONFINED`
+genuinely does not isolate the filesystem.
+
+## [0.4.0] - 2026-08-27
+
+### Added
+
+- **Coding agent** (`forge code`). A local-first agent that edits code under
+  runtime control: every run on its own git branch, every step a commit, every
+  edit compensated by a git restore. Path confinement refuses `..`, absolute
+  escapes and symlinks pointing outward; `.git/`, `.env` and key files are
+  invisible to reads. Shell execution is declared and ungranted.
+- **`forge init`** scaffolds a working project — `forge.toml`, `tools.py`,
+  `policy.yaml`, `cases/` — rather than leaving a blank directory.
+- **`tools_module` config**, so a deployment points at its own `ToolRegistry`
+  instead of the bundled examples.
+- `forge code review` / `forge code discard`; `forge prune`; `forge serve`.
+
+### Fixed
+
+Five bugs found by installing the wheel into a clean environment and using it
+as a stranger would, and four more by running `qwen3:8b` against a real repo:
+
+- **`forge run` returned a canned answer** when no model was configured — it
+  looked like it worked. It now refuses and says how to configure one.
+- **`forge doctor` reported packaged defaults**, not the project's actual
+  tools and policy.
+- **Project-local `tools.py` was unimportable** from a console-script entry
+  point, which does not put the working directory on `sys.path`.
+- **A failed run reported no reason**: `error` was only set on exception paths.
+- **`ProviderConfig.timeout_s` was never plumbed through**, and the 512-token
+  proposal ceiling truncated reasoning models into empty completions.
+- **`git rev-parse --is-inside-work-tree` is true for any descendant**, so
+  running in a subdirectory would have branched and committed the *parent*
+  repository. Now requires the repo root and names it in the refusal.
+- **`edit_file` failed on the line-number gutter** that `read_file` displays
+  and models copy back. Stripped and retried, and the normalisation recorded.
+- **The gutter regex ate line breaks** (`\s?` matches `\n`), silently
+  collapsing blank lines so the "fix" did not work.
+- **`.forge/` was committed into the user's repository** by `git add -A`.
+- **Re-applied edits duplicated code**: each insertion succeeded, producing
+  three copies of a function and a green test suite.
+
+### Changed
+
+- `InProcessTarget` now evaluates the *project's* configuration rather than
+  library defaults, and reports the model in the target version — a verdict is
+  (case-set version × target version), and for an agent the model is the target.
+- Removed the `postgres` extra: it installed a driver for a backend that does
+  not exist.
+
 ## [0.3.0] - 2026-08-26
 
 The release that closes the gap between "the runtime survives a crash" and

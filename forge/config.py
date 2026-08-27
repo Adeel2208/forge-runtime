@@ -40,7 +40,10 @@ class ProviderConfig:
 
     input_per_1k: float = 0.0
     output_per_1k: float = 0.0
-    timeout_s: float = 60.0
+    timeout_s: float = 180.0
+    """Generous by default: loading a local model onto a GPU can take minutes,
+    and a cold-start timeout reads as a broken runtime rather than a slow one."""
+
     num_ctx: int = 8192
 
     @property
@@ -78,6 +81,14 @@ class ForgeConfig:
 
     tools: tuple[str, ...] = ()
     """Default tool allow-list for tasks that do not specify one."""
+
+    tools_module: str | None = None
+    """Where your own tools live, as ``package.module:attribute``.
+
+    The attribute must be a `ToolRegistry`. This is what makes a deployment
+    yours rather than a demo: without it you get the bundled example tools,
+    which are a corpus of four strings and are not useful for anything real.
+    """
 
     max_concurrent_runs: int = 4
     checkpoint_every: int = 1
@@ -132,6 +143,8 @@ class ForgeConfig:
             scalars["database_url"] = v
         if v := env.get(f"{ENV_PREFIX}POLICY_BUNDLE"):
             scalars["policy_bundle"] = v
+        if v := env.get(f"{ENV_PREFIX}TOOLS_MODULE"):
+            scalars["tools_module"] = v
         if v := env.get(f"{ENV_PREFIX}TOOLS"):
             scalars["tools"] = tuple(t.strip() for t in v.split(",") if t.strip())
         if v := env.get(f"{ENV_PREFIX}SEED"):
@@ -198,6 +211,7 @@ class ForgeConfig:
                 "max_steps": self.budget.max_steps,
             },
             "tools": list(self.tools),
+            "tools_module": self.tools_module or "bundled examples",
             "max_concurrent_runs": self.max_concurrent_runs,
         }
 

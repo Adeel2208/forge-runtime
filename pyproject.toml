@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "forge-runtime"
-version = "0.3.0"
+version = "0.6.0"
 description = "A durable, policy-aware execution runtime for long-horizon AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,11 +20,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-postgres = ["asyncpg>=0.29"]
+# No `postgres` extra: the Postgres backend is not built yet, and an extra
+# that installs a driver nothing uses promises a capability that is not there.
+# It returns when `forge.state.postgres_store` does (ADR-0004).
 otel = ["opentelemetry-sdk>=1.25", "opentelemetry-exporter-otlp>=1.25"]
 api = ["fastapi>=0.111", "uvicorn>=0.30"]
 # Only needed to regenerate the README animation from a real run's event log.
 media = ["Pillow>=10.0"]
+# Sandbox resource enforcement. Without these the local sandbox still refuses
+# shells and scrubs the environment, but cannot cap memory or kill a tree.
+sandbox = ["psutil>=5.9", 'pywin32>=306; sys_platform == "win32"']
 dev = [
     "pytest>=8.0",
     "hypothesis>=6.100",
@@ -42,7 +47,12 @@ packages = ["forge"]
 
 # Ship the type marker so downstream consumers get types, and the packaged
 # policy bundle so a default deployment works without a config file.
-artifacts = ["forge/py.typed", "forge/security/policies/*.yaml"]
+artifacts = [
+    "forge/py.typed",
+    "forge/security/policies/*.yaml",
+    "forge/templates/**",          # scaffolding for `forge init`
+    "forge/coding/*.yaml",         # the coding agent's policy bundle
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -68,6 +78,11 @@ strict = true
 warn_unreachable = true
 disallow_any_generics = true
 plugins = []
+
+# pywin32 ships no type stubs and is a Windows-only optional import.
+[[tool.mypy.overrides]]
+module = ["win32job", "win32api", "win32con", "psutil"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["tests.*"]

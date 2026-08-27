@@ -33,7 +33,7 @@ Anything reached through a submodule path is internal and may change.
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.6.0"
 
 from forge.config import BudgetConfig, ForgeConfig, ProviderConfig, TelemetryConfig
 from forge.core.contracts import Effect, Proposal, TaskSpec

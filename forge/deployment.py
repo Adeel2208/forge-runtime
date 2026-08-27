@@ -22,8 +22,10 @@ loop detection, ledger) that must never be shared between runs.
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Sequence
 from contextlib import suppress
+from importlib import import_module
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -62,11 +64,19 @@ class Forge:
         registry: ToolRegistry | None = None,
         providers: Sequence[LLMProvider] | None = None,
         policy: PolicyBundle | None = None,
+        available_isolation: str = "confined",
+        approval: Any = None,
     ) -> None:
         self.config = config or ForgeConfig()
+        self.available_isolation = available_isolation
+        self.approval = approval
+        """Answers REQUIRE_APPROVAL. Without one the runtime refuses, which is
+        the safe default for an unattended deployment."""
+        """What this machine can actually enforce. Capabilities in the policy
+        bundle that require more remain denied - see forge.sandbox."""
         self.metrics = Metrics()
         self._store = store or self._build_store(self.config)
-        self._registry = registry or self._build_registry()
+        self._registry = registry or self._build_registry(self.config)
         self._providers = list(providers) if providers is not None else None
         self._policy_bundle = policy
         self._opened = False
@@ -102,10 +112,54 @@ class Forge:
         return SQLiteEventStore(config.sqlite_path)
 
     @staticmethod
-    def _build_registry() -> ToolRegistry:
-        from forge.tools.builtin import build_default_registry
+    def _build_registry(config: ForgeConfig) -> ToolRegistry:
+        """Load the deployment's own tools, or fall back to the examples.
 
-        return build_default_registry()
+        A deployment that has not pointed `tools_module` at its own registry
+        gets the bundled example tools. Those are a four-string corpus for the
+        demo and the test suite - useful for learning the shape, useless for
+        anything real. `forge init` scaffolds a module to replace them.
+        """
+        if not config.tools_module:
+            from forge.tools.builtin import build_default_registry
+
+            return build_default_registry()
+
+        target = config.tools_module
+        module_name, _, attribute = target.partition(":")
+        if not attribute:
+            raise UnrecoverableError(
+                f"tools_module must be 'package.module:attribute'; got {target!r}"
+            )
+        try:
+            module = import_module(module_name)
+        except ImportError:
+            # A project-local `tools.py` is the documented layout, but a
+            # console-script entry point does not put the working directory on
+            # sys.path the way `python -m` does. Honour the convention we told
+            # people to use rather than making them export PYTHONPATH.
+            cwd = str(Path.cwd())
+            if cwd not in sys.path:
+                sys.path.insert(0, cwd)
+            try:
+                module = import_module(module_name)
+            except ImportError as exc:
+                raise UnrecoverableError(
+                    f"cannot import tools module {module_name!r}: {exc}. "
+                    f"Looked in {cwd} and on PYTHONPATH. Is the file named "
+                    f"{module_name}.py and in this directory?"
+                ) from exc
+
+        registry = getattr(module, attribute, None)
+        if registry is None:
+            raise UnrecoverableError(
+                f"{module_name!r} has no attribute {attribute!r}"
+            )
+        if not isinstance(registry, ToolRegistry):
+            raise UnrecoverableError(
+                f"{target} is a {type(registry).__name__}, expected a ToolRegistry"
+            )
+        return registry
 
     def _build_providers(self) -> list[LLMProvider]:
         """Instantiate the routing chain from config, in declared order."""
@@ -146,7 +200,7 @@ class Forge:
                 ),
             ),
             registry=self._registry,
-            policy=PolicyEngine(bundle),
+            policy=PolicyEngine(bundle, available_isolation=self.available_isolation),
             compiler=ContextCompiler(),
             config=RuntimeConfig(
                 max_steps=bundle.budget.max_steps,
@@ -155,6 +209,7 @@ class Forge:
             ),
             tracer=Tracer(otel=self.config.telemetry.otel),
             metrics=self.metrics,
+            approval=self.approval,
         )
 
     # -- lifecycle ---------------------------------------------------------
@@ -280,6 +335,7 @@ def _provider_from(spec: ProviderConfig) -> LLMProvider:
                 model=spec.model,
                 host=spec.base_url or "http://127.0.0.1:11434",
                 num_ctx=spec.num_ctx,
+                timeout_s=spec.timeout_s,
             )
         case "openai":
             return OpenAICompatProvider(
@@ -287,6 +343,7 @@ def _provider_from(spec: ProviderConfig) -> LLMProvider:
                 base_url=spec.base_url or "https://api.openai.com/v1",
                 api_key=spec.api_key,
                 pricing=pricing,
+                timeout_s=spec.timeout_s,
             )
         case _:
             raise UnrecoverableError(

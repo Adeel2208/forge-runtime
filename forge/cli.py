@@ -37,6 +37,27 @@ from forge.eval.cli import app as eval_app  # noqa: E402
 
 app.add_typer(eval_app, name="eval")
 
+# `forge code ...` - the coding agent. Optional import: the runtime does not
+# depend on it, and a repo without git should still get the rest of the CLI.
+try:
+    from forge.coding.cli import app as code_app
+
+    app.add_typer(code_app, name="code")
+except ImportError:  # pragma: no cover - defensive
+    pass
+
+@app.callback(invoke_without_command=True)
+def _default(ctx: typer.Context) -> None:
+    """FORGE - a durable, policy-aware runtime, and a coding agent built on it."""
+    if ctx.invoked_subcommand is not None:
+        return
+    # Bare `forge` opens the interactive session: the first thing someone
+    # types should do something useful, not print a usage screen.
+    from forge.coding.session import run_session
+
+    raise typer.Exit(asyncio.run(run_session(Path())))
+
+
 DEFAULT_DB = ".forge/forge.db"
 DEFAULT_POLICY = Path(__file__).parent / "security" / "policies" / "default.yaml"
 DEFAULT_TOOLS = ["search_corpus", "read_document", "calculate", "save_note"]
@@ -105,46 +126,85 @@ def _demo_script() -> list[dict[str, Any]]:
 
 
 @app.command()
-def run(
-    goal: Annotated[str, typer.Argument(help="What the agent should accomplish.")] = (
-        "What did FORGE measure about durable checkpointing?"
-    ),
-    db: Annotated[str, typer.Option(help="Event-store path.")] = DEFAULT_DB,
-    provider: Annotated[str, typer.Option(help="mock | ollama")] = "mock",
-    model: Annotated[str, typer.Option(help="Model id when provider=ollama.")] = "qwen3:8b",
-    policy: Annotated[Path, typer.Option(help="Policy bundle YAML.")] = DEFAULT_POLICY,
-    crash_at: Annotated[int, typer.Option(help="Inject a worker crash at this step.")] = 0,
-    fault: Annotated[str, typer.Option(help="Inject a fault class by name.")] = "none",
-    approve: Annotated[bool, typer.Option(help="Auto-approve irreversible actions.")] = False,
-    tools: Annotated[str, typer.Option(help="Comma-separated tool allow-list.")] = ",".join(
-        DEFAULT_TOOLS
-    ),
+def init(
+    directory: Annotated[Path, typer.Argument(help="Where to scaffold.")] = Path("."),
+    force: Annotated[bool, typer.Option(help="Overwrite existing files.")] = False,
 ) -> None:
-    """Start a new run."""
+    """Scaffold a working project: config, tools, policy and a case set."""
+    from forge.scaffold import scaffold
+
+    result = scaffold(directory, force=force)
+
+    _echo("")
+    for path in result.created:
+        _echo(f"  created  {path.relative_to(Path(directory).resolve())}")
+    for path in result.skipped:
+        _echo(f"  exists   {path.relative_to(Path(directory).resolve())}  (left alone)")
+
+    if not result.anything_created:
+        _echo("\n  nothing to do - this project is already set up\n")
+        raise typer.Exit(0)
+
+    _echo(
+        "\n  next:\n"
+        "    1. edit tools.py       - replace the examples with what your agent may do\n"
+        "    2. edit policy.yaml    - grant the capabilities those tools need\n"
+        "    3. edit forge.toml     - point it at your model\n"
+        "    4. forge doctor        - check the setup\n"
+        "    5. forge run \"...\"     - run a task\n"
+        "       forge eval run cases/  - check it behaves\n"
+    )
+
+
+@app.command()
+def run(
+    goal: Annotated[str, typer.Argument(help="What the agent should accomplish.")],
+    config_path: Annotated[
+        Path | None, typer.Option("--config", help="forge.toml to load.")
+    ] = None,
+    tools: Annotated[
+        str, typer.Option(help="Comma-separated tool allow-list. Defaults to config.")
+    ] = "",
+    max_steps: Annotated[int, typer.Option(help="Override the step ceiling.")] = 0,
+    approve: Annotated[bool, typer.Option(help="Auto-approve irreversible actions.")] = False,
+) -> None:
+    """Run a task against the configured model and tools.
+
+    Reads `forge.toml` and `FORGE_*`. If no real model is configured this
+    refuses rather than returning something that looks like an answer - see
+    `forge demo` for the scripted walkthrough.
+    """
+    from forge.config import ForgeConfig
+    from forge.deployment import Forge
+
+    config = ForgeConfig.load(config_path)
+
+    # Refuse to fake it. A CLI that answers convincingly without a model is
+    # worse than one that errors, because the user believes it.
+    if all(p.kind == "mock" for p in config.providers):
+        _echo(
+            "\n  no model is configured, so this would return a canned answer.\n\n"
+            "  set one up with any of:\n"
+            "    forge init                      scaffold forge.toml and edit [[providers]]\n"
+            "    FORGE_PROVIDER=ollama FORGE_MODEL=qwen3:8b forge run \"...\"\n"
+            "    FORGE_PROVIDER=openai FORGE_MODEL=gpt-4o-mini "
+            "FORGE_API_KEY_ENV=OPENAI_API_KEY forge run \"...\"\n\n"
+            "  or see the scripted walkthrough:  forge demo\n"
+        )
+        raise typer.Exit(2)
 
     async def main() -> int:
-        store = SQLiteEventStore(db)
-        await store.open()
-        try:
-            runtime = _runtime(
-                store,
-                provider_name=provider,
-                model=model,
-                policy_path=policy,
-                fault=FaultClass(fault),
-                crash_at=crash_at or None,
-                approve=approve,
+        async with Forge(config=config) as forge:
+            allow = [t for t in tools.split(",") if t] or list(config.tools)
+            if not allow:
+                _echo(
+                    "\n  no tools are allow-listed, so the agent can only answer from\n"
+                    "  what the model already knows. Set `tools` in forge.toml or pass\n"
+                    "  --tools to grant some.\n"
+                )
+            result = await forge.run(
+                goal, tools=allow, max_steps=max_steps or None
             )
-            spec = TaskSpec(goal=goal, tools=[t for t in tools.split(",") if t])
-            try:
-                result = await runtime.start(spec)
-            except SimulatedCrash as crash:
-                runs = await store.list_runs(limit=1)
-                run_id = runs[0]["run_id"] if runs else "?"
-                _echo(f"\n  worker crashed: {crash}")
-                _echo(f"  run_id: {run_id}")
-                _echo(f"\n  resume it with:  forge resume {run_id} --db {db}")
-                return 2
 
             _echo(f"\n  status : {result.status.value}")
             _echo(f"  run_id : {result.run_id}")
@@ -158,11 +218,11 @@ def run(
             if result.answer:
                 _echo(f"\n  {result.answer}\n")
             if result.error:
-                _echo(f"  error  : {result.error}")
+                _echo(f"  error  : {result.error}\n")
+            _echo(f"  inspect: forge trace {result.run_id}\n")
             return 0 if result.ok else 1
-        finally:
-            await store.close()
 
+    del approve  # approval flows through the policy bundle, not a CLI flag
     raise typer.Exit(asyncio.run(main()))
 
 
@@ -394,39 +454,113 @@ def serve(
 
 
 @app.command()
-def doctor() -> None:
-    """Check the local environment: providers, models, and the event store."""
+def doctor(
+    config_path: Annotated[
+        Path | None, typer.Option("--config", help="forge.toml to inspect.")
+    ] = None,
+) -> None:
+    """Report what *this project* is actually configured to do.
+
+    Reads the same config the runtime does, so what it prints is what would
+    run. Reporting the packaged defaults while the project uses its own would
+    be worse than printing nothing.
+    """
+    from forge.config import ForgeConfig
+    from forge.deployment import Forge
 
     async def main() -> int:
+        config = ForgeConfig.load(config_path)
+        problems: list[str] = []
         _echo("")
-        ollama = OllamaProvider()
-        healthy = await ollama.healthy()
-        await ollama.aclose()
-        _echo(f"  ollama at {ollama.host:<28} {'reachable' if healthy else 'not reachable'}")
-        _echo("  mock provider                      always available")
 
-        store = SQLiteEventStore(DEFAULT_DB)
+        # -- config source --------------------------------------------------
+        toml = Path(config_path) if config_path else Path("forge.toml")
+        if toml.exists():
+            _echo(f"  config              {toml}")
+        else:
+            _echo("  config              none found (using defaults)")
+            problems.append("no forge.toml - run `forge init` to scaffold one")
+
+        # -- models ---------------------------------------------------------
+        kinds = [p.kind for p in config.providers]
+        if all(k == "mock" for k in kinds):
+            _echo("  model               none configured (mock only)")
+            problems.append(
+                "no real model - set [[providers]] in forge.toml, or FORGE_PROVIDER"
+            )
+        else:
+            # Diagnostics must survive a broken setup - that is the whole
+            # point of running them. Report the failure, keep checking.
+            try:
+                async with Forge(config=config) as forge:
+                    health = await forge.health()
+                for entry in health["providers"]:
+                    state = "reachable" if entry["healthy"] else "NOT reachable"
+                    _echo(f"  model               {entry['name']}/{entry['model']}  {state}")
+                    if not entry["healthy"]:
+                        problems.append(f"provider {entry['name']} is not reachable")
+            except Exception as exc:
+                _echo(f"  model               could not start: {exc}")
+                problems.append(str(exc))
+
+        # -- tools ----------------------------------------------------------
+        try:
+            registry = Forge._build_registry(config)
+            source = config.tools_module or "bundled examples"
+            _echo(f"  tools               {len(registry.names())} from {source}")
+            if not config.tools_module:
+                problems.append(
+                    "using the bundled example tools - set tools_module in forge.toml"
+                )
+            unknown = [t for t in config.tools if not registry.has(t)]
+            if unknown:
+                problems.append(f"allow-listed but not registered: {', '.join(unknown)}")
+        except Exception as exc:
+            _echo(f"  tools               FAILED to load: {exc}")
+            problems.append("tools_module could not be imported")
+
+        # -- policy ---------------------------------------------------------
+        try:
+            bundle = (
+                PolicyBundle.from_yaml(config.policy_bundle)
+                if config.policy_bundle
+                else PolicyBundle.from_yaml(DEFAULT_POLICY)
+            )
+            granted = sum(1 for g in bundle.capabilities.values() if g.granted)
+            where = config.policy_bundle or "packaged default"
+            _echo(f"  policy              {bundle.version} from {where}")
+            _echo(f"  capabilities        {granted}/{len(bundle.capabilities)} granted")
+            _echo(f"  spend ceiling       ${config.budget.max_usd:.2f} per run")
+        except Exception as exc:
+            _echo(f"  policy              FAILED to load: {exc}")
+            problems.append("policy bundle could not be loaded")
+
+        # -- state ----------------------------------------------------------
+        store = SQLiteEventStore(config.sqlite_path)
         await store.open()
         runs = await store.list_runs(limit=1000)
+        unfinished = await store.unfinished_runs()
         await store.close()
-        _echo(f"  event store {DEFAULT_DB:<26} {len(runs)} run(s)")
+        _echo(f"  event store         {config.sqlite_path}  ({len(runs)} runs)")
+        if unfinished:
+            _echo(f"  unfinished runs     {len(unfinished)}  (a supervisor would resume these)")
 
-        registry = build_default_registry()
-        _echo(f"  tools registered                   {len(registry.names())}")
-
-        bundle = PolicyBundle.from_yaml(DEFAULT_POLICY)
-        granted = sum(1 for g in bundle.capabilities.values() if g.granted)
-        _echo(f"  policy bundle                      {bundle.version}")
-        _echo(f"  capabilities granted               {granted}/{len(bundle.capabilities)}")
-        _echo(f"  spend ceiling                      ${bundle.budget.max_usd:.2f} per run")
-
+        # -- cases ----------------------------------------------------------
         try:
             cases = CaseSet.load("cases")
-            _echo(f"  case set                           {cases.version} "
-                  f"({len(cases)} cases)")
+            _echo(f"  case set            {cases.version}  ({len(cases)} cases)")
         except (CaseSetError, OSError):
-            _echo("  case set                           not found in ./cases")
-        _echo("")
+            _echo("  case set            none in ./cases")
+            problems.append("no case set - run `forge init`, then `forge eval run cases/`")
+
+        if problems:
+            _echo("\n  needs attention:")
+            for problem in problems:
+                _echo(f"    - {problem}")
+            _echo("")
+            return 1
+
+        _echo("\n  ready\n")
         return 0
 
     raise typer.Exit(asyncio.run(main()))
