@@ -1,0 +1,56 @@
+# FORGE deployment configuration.
+#
+# Precedence: built-in defaults -> this file -> FORGE_* environment variables.
+# Nothing here is a secret: provider keys are referenced by the *name* of the
+# environment variable that holds them, never by value.
+
+# Where the event log lives. This file must be on durable storage - losing it
+# loses every in-flight run's ability to resume.
+database_url = "sqlite:///.forge/forge.db"
+
+# What this deployment is allowed to authorize. Deny-by-default.
+policy_bundle = "policy.yaml"
+
+# Your tools, as "module:attribute" pointing at a ToolRegistry.
+# Until you set this you get the bundled example tools, which are a corpus of
+# four strings - fine for learning the shape, useless for real work.
+tools_module = "tools:registry"
+
+# Tools a task may use when it does not name its own allow-list.
+# A tool not listed here is refused even if it is registered.
+tools = ["search_notes", "save_note"]
+
+
+# ── models ───────────────────────────────────────────────────────────────
+# Tried in order. If one is unaffordable or unreachable, the next is used and
+# the failover is recorded in the trace.
+
+[[providers]]
+kind = "ollama"
+model = "qwen3:8b"
+# base_url = "http://127.0.0.1:11434"
+
+# [[providers]]
+# kind = "openai"                  # any OpenAI-compatible endpoint
+# model = "gpt-4o-mini"
+# base_url = "https://api.openai.com/v1"
+# api_key_env = "OPENAI_API_KEY"   # the variable NAME, not the key
+# input_per_1k = 0.00015           # required for spend enforcement to mean anything
+# output_per_1k = 0.0006
+
+
+# ── limits ───────────────────────────────────────────────────────────────
+# Checked before each call, not reported afterwards. A run that would exceed
+# a ceiling is stopped rather than billed.
+
+[budget]
+max_usd = 5.0
+max_steps = 24
+max_tool_calls = 32
+max_tokens = 250000
+max_wall_clock_s = 1800
+
+
+[telemetry]
+otel = false          # true to mirror spans to an installed OpenTelemetry SDK
+service_name = "forge"

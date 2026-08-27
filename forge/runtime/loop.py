@@ -308,6 +308,16 @@ class AgentRuntime:
                     if outcome == "failed":
                         phase = await self._goto(run.id, phase, Phase.FAILED, state.step_index)
                         state.status = RunStatus.FAILED
+                        # Carry the reason out. A run that failed without
+                        # saying why forces the operator into the event log
+                        # for something the result should have told them.
+                        if state.failures:
+                            last = state.failures[-1]
+                            error = f"{last.get('kind')}: {last.get('detail')}"
+                        await self._emit(
+                            EventType.RUN_FAILED, run.id,
+                            payload={"error": error or "step failed"},
+                        )
                         break
 
                 else:
@@ -652,7 +662,12 @@ class AgentRuntime:
                     messages=view.messages,
                     response_schema=PROPOSAL_SCHEMA,
                     tools=view.tool_schemas,
-                    max_tokens=512,
+                    # A proposal is a small object, but a reasoning model
+                    # spends output tokens thinking before it emits one. Too
+                    # low a ceiling truncates that and returns nothing, which
+                    # surfaces as "model output is not valid JSON" and looks
+                    # like a model defect rather than a budget we set.
+                    max_tokens=2048,
                 )
             )
             span.set(provider=response.provider, model=response.model)

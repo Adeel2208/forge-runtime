@@ -1,0 +1,49 @@
+# Your policy bundle: what this deployment will and will not authorize.
+#
+# Deny-by-default. A capability that is not listed here is not granted, and a
+# tool whose capability is not granted cannot run - regardless of what the
+# model proposes or how convincingly it argues.
+#
+# Point forge.toml at this file:  policy_bundle = "policy.yaml"
+
+# Bump this whenever the meaning of anything below changes. Runs record which
+# bundle authorized them, so "why was that allowed?" has an exact answer.
+version: myapp/1.0.0
+
+budget:
+  usd_ceiling: 5.00        # per run, checked before each model call
+  tokens_per_run: 250000
+  wall_clock_seconds: 1800
+  max_steps: 24
+  max_tool_calls: 32
+
+capabilities:
+
+  INFERENCE:
+    granted: true
+    allowed_effects: [READ]
+
+  NOTES_READ:
+    granted: true
+    allowed_effects: [READ]
+
+  NOTES_WRITE:
+    granted: true
+    max_invocations: 8       # per run; the ceiling is counted, not negotiated
+    allowed_effects: [READ, REVERSIBLE_WRITE]
+
+  # Declared so it is visible, ungranted so it cannot fire. Attempts are
+  # recorded as policy denials, which is what you want to see in the log
+  # rather than a surprise in someone's inbox.
+  EXTERNAL_SEND:
+    granted: false
+    requires_approval: true
+    allowed_effects: [IRREVERSIBLE_WRITE]
+
+# Anything irreversible needs a human, even when its capability is granted.
+require_approval_for:
+  - IRREVERSIBLE_WRITE
+
+on_denial:
+  action: fallback
+  log: policy_decision

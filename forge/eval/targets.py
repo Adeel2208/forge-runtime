@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -132,13 +132,21 @@ class InProcessTarget:
 
         self._config = config
         self._version = f"forge/{__version__}"
+        self._model_label = ""
         self._fixtures = Path(fixtures_dir)
         self._workdir = Path(workdir) if workdir else None
         self._owns_workdir = workdir is None
 
     @property
     def version(self) -> str:
-        return self._version
+        """Runtime version *and* model.
+
+        A verdict is only interpretable as (case-set version x target
+        version), and for an agent the model is part of the target: the same
+        cases against the same code with a different model is a different
+        system, and a diff that hid that would be misleading.
+        """
+        return f"{self._version}{self._model_label}"
 
     async def available(self) -> bool:
         return True
@@ -147,6 +155,13 @@ class InProcessTarget:
         if self._workdir is None:
             self._workdir = Path(tempfile.mkdtemp(prefix="forge-eval-"))
         self._workdir.mkdir(parents=True, exist_ok=True)
+
+        from forge.config import ForgeConfig
+
+        config = self._config if self._config is not None else ForgeConfig.load()
+        if config.providers:
+            first = config.providers[0]
+            self._model_label = f" {first.kind}/{first.model}"
 
     async def teardown(self) -> None:
         if self._owns_workdir and self._workdir and self._workdir.exists():
@@ -172,9 +187,13 @@ class InProcessTarget:
         if db.exists():
             db.unlink()
 
-        base = self._config or ForgeConfig()
-        config = type(base)(
-            **{**base.__dict__, "database_url": f"sqlite:///{db}", "seed": seed}
+        # Evaluate the *project's* configuration - its model, its tools, its
+        # policy. Falling back to library defaults would silently grade a mock
+        # provider and bundled example tools, so every case would be measuring
+        # something nobody deployed.
+        base = self._config if self._config is not None else ForgeConfig.load()
+        config = replace(
+            base, database_url=f"sqlite:///{db}", seed=seed
         )
 
         providers = None

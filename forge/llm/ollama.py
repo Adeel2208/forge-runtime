@@ -34,12 +34,19 @@ class OllamaProvider:
         host: str = "http://127.0.0.1:11434",
         name: str = "ollama",
         num_ctx: int = 8192,
+        timeout_s: float = 180.0,
+        disable_thinking: bool = True,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.name = name
         self.model = model
         self.host = host.rstrip("/")
         self.num_ctx = num_ctx
+        # Local models cold-start slowly: loading an 8B model onto a GPU can
+        # take well over a minute, and a first-call timeout looks to the user
+        # like the runtime is broken rather than the model still loading.
+        self.timeout_s = timeout_s
+        self.disable_thinking = disable_thinking
         self.pricing = Pricing()  # local inference costs nothing
         self._client = client
         self._owns_client = client is None
@@ -75,11 +82,18 @@ class OllamaProvider:
         }
         if request.response_schema is not None:
             payload["format"] = request.response_schema
+            # Hybrid reasoning models (qwen3, granite) would otherwise spend
+            # the output budget on a <think> block and return an empty
+            # completion. The runtime wants one structured proposal, and
+            # `rationale_summary` is where the model explains itself.
+            if self.disable_thinking:
+                payload["think"] = False
 
         started = time.monotonic()
         try:
             client = await self._http()
-            resp = await client.post("/api/chat", json=payload, timeout=request.timeout_s)
+            timeout = self.timeout_s or request.timeout_s
+            resp = await client.post("/api/chat", json=payload, timeout=timeout)
             resp.raise_for_status()
             body = resp.json()
         except httpx.TimeoutException as exc:

@@ -42,6 +42,7 @@ class OpenAICompatProvider:
         name: str | None = None,
         pricing: Pricing | None = None,
         organization: str | None = None,
+        timeout_s: float | None = None,
         client: httpx.AsyncClient | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
@@ -51,6 +52,7 @@ class OpenAICompatProvider:
         self.pricing = pricing or Pricing()
         self._api_key = api_key
         self._organization = organization
+        self.timeout_s = timeout_s
         self._extra_headers = extra_headers or {}
         self._client = client
         self._owns_client = client is None
@@ -112,7 +114,7 @@ class OpenAICompatProvider:
                 "/chat/completions",
                 json=payload,
                 headers=self._headers(),
-                timeout=request.timeout_s,
+                timeout=self.timeout_s or request.timeout_s,
             )
         except httpx.TimeoutException as exc:
             raise ProviderUnavailable(
