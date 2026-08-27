@@ -19,6 +19,7 @@ liked, and the disjointness rule would mean nothing.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
@@ -80,19 +81,30 @@ class KnowledgeSession:
     is_librarian: bool = False
 
 
-_SESSION: KnowledgeSession | None = None
+# A ContextVar, not a module global. The API runs concurrent runs as asyncio
+# tasks in one process, and each task gets its own copy of the context, so a
+# session bound inside one task cannot leak into a sibling.
+#
+# With a plain global this is not a style question, it is a correctness hole:
+# two interleaved runs share one binding, and whichever bound last owns every
+# subsequent write. A note then carries the wrong author_run_id, and the
+# disjointness rule - the thing this entire layer exists to enforce - is
+# computed against an identity that never wrote it.
+_SESSION: ContextVar[KnowledgeSession | None] = ContextVar(
+    "forge_knowledge_session", default=None
+)
 
 
 def bind_session(session: KnowledgeSession | None) -> None:
-    """Install the session the knowledge tools act under."""
-    global _SESSION
-    _SESSION = session
+    """Install the session the knowledge tools act under, for this task only."""
+    _SESSION.set(session)
 
 
 def current_session() -> KnowledgeSession:
-    if _SESSION is None:
+    session = _SESSION.get()
+    if session is None:
         raise KnowledgeRejected("UNKNOWN_NOTE", "no knowledge session is bound")
-    return _SESSION
+    return session
 
 
 AGENT_TOOLS = ToolRegistry()

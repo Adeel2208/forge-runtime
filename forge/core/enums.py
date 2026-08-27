@@ -153,3 +153,21 @@ class EventType(StrEnum):
     NOTES_MERGED = "NOTES_MERGED"
     NOTE_REANCHORED = "NOTE_REANCHORED"
     ADVERSARIAL_RETEST_RECORDED = "ADVERSARIAL_RETEST_RECORDED"
+
+
+#: Knowledge events are facts a run established, not state belonging to it.
+#: Retention deletes runs; it must not delete what they found out. Defined
+#: here rather than in `forge.knowledge` so `forge.state` can honour it
+#: without depending on the knowledge package.
+KNOWLEDGE_EVENT_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.NOTE_PROPOSED,
+        EventType.ATTESTATION_RECORDED,
+        EventType.ATTESTATION_RETRACTED,
+        EventType.NOTE_QUARANTINED,
+        EventType.NOTE_RELEASED,
+        EventType.NOTES_MERGED,
+        EventType.NOTE_REANCHORED,
+        EventType.ADVERSARIAL_RETEST_RECORDED,
+    }
+)

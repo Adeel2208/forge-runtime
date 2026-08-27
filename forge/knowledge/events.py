@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from forge.core.enums import KNOWLEDGE_EVENT_TYPES as _CORE_KNOWLEDGE_EVENT_TYPES
 from forge.core.enums import EventType
 from forge.core.events import Event, NewEvent
 from forge.ids import content_hash
@@ -52,18 +53,9 @@ __all__ = [
     "note_idempotency_key",
 ]
 
-KNOWLEDGE_EVENT_TYPES: frozenset[EventType] = frozenset(
-    {
-        EventType.NOTE_PROPOSED,
-        EventType.ATTESTATION_RECORDED,
-        EventType.ATTESTATION_RETRACTED,
-        EventType.NOTE_QUARANTINED,
-        EventType.NOTE_RELEASED,
-        EventType.NOTES_MERGED,
-        EventType.NOTE_REANCHORED,
-        EventType.ADVERSARIAL_RETEST_RECORDED,
-    }
-)
+# Re-exported from core so `forge.state` can honour it during retention
+# without importing the knowledge package. One definition, two consumers.
+KNOWLEDGE_EVENT_TYPES = _CORE_KNOWLEDGE_EVENT_TYPES
 
 
 # -- encoding ---------------------------------------------------------------

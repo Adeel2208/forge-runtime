@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from forge.core.contracts import Checkpoint
-from forge.core.enums import EventType
+from forge.core.enums import KNOWLEDGE_EVENT_TYPES, EventType
 from forge.core.events import Event, NewEvent
 from forge.state.store import AppendResult
 
@@ -264,9 +264,24 @@ class SQLiteEventStore:
             return 0
 
         placeholders = ",".join("?" * len(victims))
+        # Knowledge events survive the run that wrote them. They are facts the
+        # run established, not state belonging to it - deleting them would let
+        # routine retention silently destroy the shared knowledge base, taking
+        # corroborated notes and the attestations pointing at them.
+        #
+        # This does not violate the whole-runs rule above. `project()` ignores
+        # knowledge events entirely, so a run whose runtime events are gone
+        # projects to nothing either way, and `unfinished_runs` keys on
+        # RUN_CREATED, so what remains cannot masquerade as resumable work.
+        keep = sorted(t.value for t in KNOWLEDGE_EVENT_TYPES)
+        keep_slots = ",".join("?" * len(keep))
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(f"DELETE FROM events WHERE run_id IN ({placeholders})", victims)
+            conn.execute(
+                f"DELETE FROM events WHERE run_id IN ({placeholders})"
+                f" AND type NOT IN ({keep_slots})",
+                (*victims, *keep),
+            )
             conn.execute(f"DELETE FROM checkpoints WHERE run_id IN ({placeholders})", victims)
             conn.execute("COMMIT")
         except Exception:
