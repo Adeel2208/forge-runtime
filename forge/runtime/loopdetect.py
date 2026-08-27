@@ -35,6 +35,16 @@ class LoopDetector:
     max_identical: int = 3
     """Same fingerprint this many times in a row -> stuck."""
 
+    max_identical_write: int = 2
+    """Tighter bound for actions that change something.
+
+    A repeated *write* that succeeds is worse than one that fails: each
+    application lands, so a model that has lost track leaves three copies of
+    a function behind. A repeated *read* costs a step and nothing else, and
+    re-reading a file mid-task is ordinary behaviour - bounding both at the
+    same number kills legitimate runs, which is exactly what it did.
+    """
+
     max_cycle_repeats: int = 3
     """A cycle of length 2..4 repeating this many times -> oscillating."""
 
@@ -44,15 +54,17 @@ class LoopDetector:
     _last_observation_count: int = 0
     _stagnant_steps: int = 0
 
-    def record_action(self, fingerprint: str) -> LoopSignal:
+    def record_action(self, fingerprint: str, *, mutating: bool = False) -> LoopSignal:
         self.fingerprints.append(fingerprint)
 
-        tail = self.fingerprints[-self.max_identical :]
-        if len(tail) == self.max_identical and len(set(tail)) == 1:
+        limit = self.max_identical_write if mutating else self.max_identical
+        tail = self.fingerprints[-limit:]
+        if len(tail) == limit and len(set(tail)) == 1:
             return LoopSignal(
                 tripped=True,
                 kind="identical_action",
-                detail=f"{fingerprint} repeated {self.max_identical}x",
+                detail=f"{fingerprint} repeated {limit}x"
+                + (" (mutating)" if mutating else ""),
             )
 
         for size in (2, 3, 4):

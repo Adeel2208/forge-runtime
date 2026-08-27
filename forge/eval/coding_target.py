@@ -143,6 +143,7 @@ class CodingTarget:
                 "tests_run": result.tests_run,
                 "tests_passed": result.tests_passed,
                 "branch": result.branch,
+                "run_error": result.run.error,
             },
         )
 

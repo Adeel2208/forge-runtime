@@ -182,17 +182,21 @@ class CodingAgent:
             approval=self.approval,
         )
         compiler = _CodingCompiler(
-            self.workspace, token_budget=(self.config.budget.max_tokens and 6000) or 6000
+            self.workspace,
+            repo=self.repo,
+            base_ref=session.base_ref,
+            token_budget=6000,
         )
 
         started = time.monotonic()
         async with forge:
             runtime = forge._build_runtime()
             runtime.compiler = compiler
-            # Two identical edits, not three. A repeated code edit that
-            # *succeeds* is worse than one that fails: each application lands,
-            # so waiting for a third leaves three copies in the file.
-            runtime.detector.max_identical = 2
+            # Two identical *edits*, not three: each application lands, so
+            # waiting for a third leaves three copies in the file. Reads keep
+            # the looser default - re-reading a file mid-task is ordinary, and
+            # bounding both at two killed legitimate runs.
+            runtime.detector.max_identical_write = 2
             if on_step is not None:
                 _attach_progress(runtime, session, context, on_step)
             else:
@@ -275,8 +279,21 @@ class _CodingCompiler(ContextCompiler):
             return ""
         try:
             diff = self._repo.diff(base=self._base_ref)
-        except Exception:  # noqa: BLE001 - context is best-effort, never fatal
+            # `git diff` says nothing about untracked files, so a file the
+            # agent just *created* is invisible in its own running diff -
+            # exactly the case where it is most likely to create it twice.
+            created = [
+                line[3:].strip()
+                for line in self._repo.run("status", "--porcelain").splitlines()
+                if line.startswith("??")
+            ]
+        except Exception:
             return ""
+
+        if created:
+            diff += "\n\n# files you created (not yet committed):\n" + "\n".join(
+                f"  {name}" for name in created[:20]
+            )
         if not diff.strip():
             return ""
 

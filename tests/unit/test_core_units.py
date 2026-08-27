@@ -403,3 +403,22 @@ def test_calculator_rejects_non_arithmetic() -> None:
     with pytest.raises(ValueError):
         _safe_eval("__import__('os').system('echo hi')")
     assert _safe_eval("38 * 2 + 4") == 80
+
+
+def test_loop_detector_is_stricter_about_writes_than_reads() -> None:
+    """Regression: bounding reads at two killed legitimate runs.
+
+    A repeated *write* that succeeds is worse than one that fails - each
+    application lands, so a model that has lost track leaves three copies of a
+    function behind. A repeated *read* costs a step and nothing else, and
+    re-reading a file mid-task is ordinary. Observed live: two identical
+    read_file calls ended a run that was otherwise making progress.
+    """
+    reads = LoopDetector(max_identical=3, max_identical_write=2)
+    assert not reads.record_action("r", mutating=False)
+    assert not reads.record_action("r", mutating=False), "two reads must be fine"
+    assert reads.record_action("r", mutating=False), "three identical reads is a loop"
+
+    writes = LoopDetector(max_identical=3, max_identical_write=2)
+    assert not writes.record_action("w", mutating=True)
+    assert writes.record_action("w", mutating=True), "two identical writes is a loop"

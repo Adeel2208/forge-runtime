@@ -418,3 +418,82 @@ def test_adding_a_second_call_to_an_existing_function_is_allowed(repo) -> None:
     }))
     assert outcome.ok
     assert ws.read("src/run.py").count("work()") == 2
+
+
+# ── the agent can see its own work ──────────────────────────────────────
+
+
+def test_the_running_diff_is_put_in_context(repo) -> None:
+    """A model that cannot see its own changes re-does them.
+
+    It added the same function three times and stopped after one file
+    believing it was done. Its own diff is the cheapest correction, and unlike
+    a prompt instruction it cannot forget to consult it.
+    """
+    from forge.coding.agent import _CodingCompiler
+    from forge.state.projection import RunState
+
+    ws = Workspace(repo)
+    git = GitRepo(repo)
+    base = git.head()
+    ws.write("src/calc.py", "def add(a, b):\n    return a + b\n\n\ndef sub():\n    pass\n")
+
+    view = _CodingCompiler(ws, repo=git, base_ref=base).compile(
+        step_id="s", state=RunState(goal="add sub"), tool_schemas=[]
+    )
+    body = view.messages[0]["content"]
+
+    assert "WORK YOU HAVE ALREADY DONE" in body
+    assert "def sub" in body, "the diff itself must be visible, not just a summary"
+    # Above the repo map: knowing what you changed matters more than the layout.
+    assert body.index("WORK YOU HAVE ALREADY DONE") < body.index("REPOSITORY MAP")
+
+
+def test_the_running_diff_is_absent_before_any_change(repo) -> None:
+    """No diff, no section - the budget is not spent on an empty heading."""
+    from forge.coding.agent import _CodingCompiler
+    from forge.state.projection import RunState
+
+    git = GitRepo(repo)
+    view = _CodingCompiler(Workspace(repo), repo=git, base_ref=git.head()).compile(
+        step_id="s", state=RunState(goal="x"), tool_schemas=[]
+    )
+    assert "WORK YOU HAVE ALREADY DONE" not in view.messages[0]["content"]
+
+
+def test_a_newly_created_file_is_visible_in_the_running_diff(repo) -> None:
+    """`git diff` omits untracked files, so a created file would be invisible.
+
+    That is precisely the case where the agent is most likely to create it a
+    second time, having no record that it already did.
+    """
+    from forge.coding.agent import _CodingCompiler
+    from forge.state.projection import RunState
+
+    ws = Workspace(repo)
+    git = GitRepo(repo)
+    base = git.head()
+    ws.write("src/brand_new.py", "X = 1\n")
+
+    view = _CodingCompiler(ws, repo=git, base_ref=base).compile(
+        step_id="s", state=RunState(goal="x"), tool_schemas=[]
+    )
+    body = view.messages[0]["content"]
+    assert "files you created" in body
+    assert "src/brand_new.py" in body
+
+
+def test_a_bounded_diff_does_not_blow_the_context(repo) -> None:
+    ws = Workspace(repo)
+    git = GitRepo(repo)
+    base = git.head()
+    # A *tracked* file: the ceiling applies to what `git diff` produces.
+    ws.write("src/calc.py", "\n".join(f"LINE_{i} = {i}" for i in range(4000)))
+
+    from forge.coding.agent import _CodingCompiler
+    from forge.state.projection import RunState
+
+    view = _CodingCompiler(ws, repo=git, base_ref=base, max_diff_chars=800).compile(
+        step_id="s", state=RunState(goal="x"), tool_schemas=[]
+    )
+    assert "[diff truncated]" in view.messages[0]["content"]

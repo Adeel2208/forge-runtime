@@ -46,6 +46,7 @@ from forge.core.enums import (
     ProposalKind,
     RetryClass,
     RunStatus,
+    SideEffect,
 )
 from forge.core.events import NewEvent
 from forge.errors import (
@@ -536,7 +537,8 @@ class AgentRuntime:
             return await self._continue(run, state, phase)
 
         signal = self.detector.record_action(
-            self.registry.get(action.tool).fingerprint(action.arguments)
+            self.registry.get(action.tool).fingerprint(action.arguments),
+            mutating=action.side_effect is not SideEffect.READ,
         )
         if signal:
             await self._emit(

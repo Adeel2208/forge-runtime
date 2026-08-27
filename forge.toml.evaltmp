@@ -1,5 +1,0 @@
-[[providers]]
-kind = "ollama"
-model = "qwen3:8b"
-[budget]
-max_steps = 25

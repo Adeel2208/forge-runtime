@@ -93,6 +93,10 @@ class CaseRecord:
                     "steps": observation.steps,
                     "duplicate_effects": observation.duplicate_effects,
                     "tools_used": observation.tools_used,
+                    # Why the target itself stopped, distinct from why the
+                    # assertions failed. Without it every failed run is a trip
+                    # to the event log.
+                    "run_error": (observation.raw or {}).get("run_error"),
                 }
                 if observation is not None
                 else {}
