@@ -1,0 +1,18 @@
+{
+  "started_at": "2026-08-27T07:20:46+00:00",
+  "finished_at": "2026-08-27T07:25:06+00:00",
+  "case_set_version": "1.0.0",
+  "case_set_source": "cases\\coding.yaml",
+  "suite": "coding",
+  "target_name": "coding",
+  "target_version": "forge/0.6.0 ollama/qwen3:8b",
+  "harness_version": "0.6.0",
+  "seed": 1729,
+  "python": "3.11.0",
+  "platform": "Windows-10-10.0.26200",
+  "total": 6,
+  "counts": {
+    "PASSED": 4,
+    "ASSERTION_FAILED": 2
+  }
+}

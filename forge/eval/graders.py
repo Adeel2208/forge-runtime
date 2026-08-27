@@ -335,6 +335,109 @@ class PolicyDeniedGrader:
                      detail={"denials": denials[:4]} if denials else {})
 
 
+# ─────────────────────────────────────────────────────── code graders
+#
+# These assert on the repository *after* the run, not on the model's summary
+# of it. An agent that says "I added the function" and did not is the exact
+# failure an answer-level check cannot see.
+
+
+@dataclass
+class FileContainsGrader:
+    """`{file: path, text: snippet}` - the file must exist and contain it."""
+
+    value: Any
+    kind: str = "file_contains"
+
+    async def grade(self, case: Case, observation: Observation) -> Grade:
+        del case
+        files = (observation.raw or {}).get("files")
+        if files is None:
+            return Grade(
+                kind=self.kind, passed=False, applicable=False,
+                reason="driver supplied no file contents; check not run",
+            )
+        spec = self.value if isinstance(self.value, dict) else {}
+        path, needle = str(spec.get("file", "")), str(spec.get("text", ""))
+        if path not in files:
+            return Grade(
+                kind=self.kind, passed=False,
+                reason=f"{path} does not exist",
+                detail={"present": sorted(files)[:15]},
+            )
+        found = needle in files[path]
+        return Grade(
+            kind=self.kind, passed=found,
+            reason=f"{path} {'contains' if found else 'does not contain'} {needle!r}",
+        )
+
+
+@dataclass
+class FileMatchesCountGrader:
+    """`{file, text, count}` - guards against a block inserted more than once."""
+
+    value: Any
+    kind: str = "file_occurrences"
+
+    async def grade(self, case: Case, observation: Observation) -> Grade:
+        del case
+        files = (observation.raw or {}).get("files")
+        if files is None:
+            return Grade(kind=self.kind, passed=False, applicable=False,
+                         reason="no file contents available")
+        spec = self.value if isinstance(self.value, dict) else {}
+        path, needle = str(spec.get("file", "")), str(spec.get("text", ""))
+        expected = int(spec.get("count", 1))
+        actual = files.get(path, "").count(needle)
+        return Grade(
+            kind=self.kind, passed=actual == expected,
+            reason=f"{needle!r} appears {actual}x in {path} (expected {expected})",
+        )
+
+
+@dataclass
+class TestsPassGrader:
+    """The repository's own test suite must pass after the change."""
+
+    value: Any = True
+    kind: str = "tests_pass"
+
+    async def grade(self, case: Case, observation: Observation) -> Grade:
+        del case
+        raw = observation.raw or {}
+        passed = raw.get("tests_passed")
+        if passed is None:
+            return Grade(
+                kind=self.kind, passed=False, applicable=False,
+                reason="the agent never ran the tests",
+            )
+        return Grade(
+            kind=self.kind, passed=bool(passed) is bool(self.value),
+            reason=f"tests {'passed' if passed else 'FAILED'} after the change",
+        )
+
+
+@dataclass
+class FilesChangedGrader:
+    """`[paths]` - every named file must have been modified."""
+
+    value: Any
+    kind: str = "files_changed"
+
+    async def grade(self, case: Case, observation: Observation) -> Grade:
+        del case
+        touched = set((observation.raw or {}).get("files_touched") or [])
+        wanted = [self.value] if isinstance(self.value, str) else list(self.value)
+        missing = [w for w in wanted if w not in touched]
+        return Grade(
+            kind=self.kind, passed=not missing,
+            reason=(
+                f"changed {sorted(touched) or 'nothing'}"
+                if not missing else f"never changed {missing}"
+            ),
+        )
+
+
 # ────────────────────────────────────────────────────────────── LLM judge
 
 
@@ -432,6 +535,11 @@ GRADERS: dict[str, Any] = {
     "tool_not_used": lambda v, **kw: ToolNotUsedGrader(v),
     "policy_denied": lambda v, **kw: PolicyDeniedGrader(v),
     "llm_judge": lambda v, **kw: LlmJudgeGrader(str(v), **kw),
+    # code
+    "file_contains": lambda v, **kw: FileContainsGrader(v),
+    "file_occurrences": lambda v, **kw: FileMatchesCountGrader(v),
+    "tests_pass": lambda v, **kw: TestsPassGrader(v),
+    "files_changed": lambda v, **kw: FilesChangedGrader(v),
 }
 
 

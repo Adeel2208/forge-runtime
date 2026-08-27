@@ -20,6 +20,7 @@ noise never masquerades as a verdict on the target.
 from __future__ import annotations
 
 from forge.eval.cases import Case, CaseSet, CaseSetError
+from forge.eval.coding_target import CodingTarget
 from forge.eval.graders import Grade, Grader, build_grader, register_grader
 from forge.eval.outcomes import Outcome
 from forge.eval.report import render_markdown, render_terminal
@@ -50,6 +51,7 @@ __all__ = [  # noqa: RUF022 - grouped by concern, not alphabetised
     "InProcessTarget",
     "HttpTarget",
     "CliTarget",
+    "CodingTarget",
     "CallableTarget",
     # grading
     "Grader",

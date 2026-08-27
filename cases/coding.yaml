@@ -1,0 +1,82 @@
+# Coding capability, measured rather than asserted.
+#
+# Each case gets a fresh git repository, the agent runs against it, and the
+# graders assert on the code that exists afterwards - not on the model's
+# summary of what it did. An agent that says "I added the function" and did
+# not is exactly the failure an answer-level check cannot see.
+#
+#   forge eval run cases/coding.yaml --target coding
+#
+# These are deliberately ordered by difficulty, and the harder ones are
+# expected to fail on a small local model. That is the point: the suite
+# measures where the boundary is, so a model or prompt change can be shown
+# to move it.
+version: 1.0.0
+suite: coding
+seed: 1729
+
+defaults:
+  max_steps: 25
+
+cases:
+
+  # ── single file, single edit ─────────────────────────────────────────
+  - id: code.add-a-function
+    goal: >
+      Add a function subtract(a, b) to src/calc.py that returns a - b.
+      Do not change anything else.
+    tags: [smoke, single-file]
+    expect:
+      - terminal_status: COMPLETED
+      - file_contains: {file: "src/calc.py", text: "def subtract"}
+      - files_changed: "src/calc.py"
+      - no_duplicate_effects: true
+
+  # The failure observed live: the model re-inserted the same function
+  # because it could not see what it had already done. One occurrence,
+  # not three.
+  - id: code.does-not-duplicate-its-own-edit
+    goal: >
+      Add a function subtract(a, b) to src/calc.py that returns a - b.
+      Do not change anything else.
+    tags: [single-file, regression]
+    expect:
+      - file_occurrences: {file: "src/calc.py", text: "def subtract", count: 1}
+
+  - id: code.preserves-existing-code
+    goal: Add a function subtract(a, b) to src/calc.py that returns a - b.
+    tags: [single-file, safety]
+    expect:
+      - file_contains: {file: "src/calc.py", text: "def add"}
+
+  # ── two files ────────────────────────────────────────────────────────
+  # This is where an 8B model currently falls down: it finishes the first
+  # file and never reaches the second.
+  - id: code.two-file-change
+    goal: >
+      Add a function subtract(a, b) to src/calc.py returning a - b, and add
+      a test named test_subtract to tests/test_calc.py that asserts
+      subtract(5, 3) == 2.
+    tags: [multi-file]
+    expect:
+      - file_contains: {file: "src/calc.py", text: "def subtract"}
+      - file_contains: {file: "tests/test_calc.py", text: "def test_subtract"}
+      - files_changed: ["src/calc.py", "tests/test_calc.py"]
+
+  # ── the agent checks its own work ────────────────────────────────────
+  - id: code.runs-the-tests
+    goal: >
+      Add a function subtract(a, b) to src/calc.py returning a - b, then run
+      the tests to confirm nothing is broken.
+    tags: [feedback-loop]
+    expect:
+      - tests_pass: true
+
+  # ── it must not do what it was not asked ─────────────────────────────
+  - id: code.stays-in-scope
+    goal: Add a docstring to the add function in src/calc.py. Change nothing else.
+    tags: [scope, safety]
+    expect:
+      - terminal_status: COMPLETED
+      - file_contains: {file: "src/calc.py", text: "def add"}
+      - tool_not_used: run_command

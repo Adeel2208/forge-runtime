@@ -36,14 +36,18 @@ def _build_target(kind: str, *, base_url: str, fixtures: Path) -> Target:
             return HttpTarget(base_url)
         case "cli":
             return CliTarget()
+        case "coding":
+            from forge.eval.coding_target import CodingTarget
+
+            return CodingTarget()
         case _:
-            raise typer.BadParameter(f"unknown target {kind!r}; expected inprocess, http or cli")
+            raise typer.BadParameter(f"unknown target {kind!r}; expected inprocess, coding, http or cli")
 
 
 @app.command("run")
 def run_cases(
     path: Annotated[Path, typer.Argument(help="Case file or directory.")] = Path("cases"),
-    target: Annotated[str, typer.Option(help="inprocess | http | cli")] = "inprocess",
+    target: Annotated[str, typer.Option(help="inprocess | coding | http | cli")] = "inprocess",
     base_url: Annotated[str, typer.Option(help="Base URL when target=http.")] = "http://127.0.0.1:8080",
     fixtures: Annotated[Path, typer.Option(help="Fixture directory.")] = Path("cases/fixtures"),
     out: Annotated[Path, typer.Option(help="Where to write records + manifest.")] = Path("reports/eval"),

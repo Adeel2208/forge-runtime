@@ -235,10 +235,21 @@ class _CodingCompiler(ContextCompiler):
     the token budget on something the model already saw.
     """
 
-    def __init__(self, workspace: Workspace, *, token_budget: int = 6000) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        *,
+        repo: Any = None,
+        base_ref: str = "",
+        token_budget: int = 6000,
+        max_diff_chars: int = 2500,
+    ) -> None:
         super().__init__(token_budget=token_budget, max_observations=6)
         self.SYSTEM_PROMPT = CODING_SYSTEM_PROMPT
         self._map = workspace.repo_map()
+        self._repo = repo
+        self._base_ref = base_ref
+        self._max_diff_chars = max_diff_chars
 
     def _candidates(self, state: Any, tool_schemas: Any, budget_note: str) -> Any:
         from forge.context.compiler import Section
@@ -247,7 +258,39 @@ class _CodingCompiler(ContextCompiler):
         # Priority 15: after the goal, before the tool list. The model needs to
         # know what exists before it can be told what it may do.
         sections.append(Section("repo_map", 15, self._map))
+
+        work = self._work_so_far()
+        if work:
+            # Priority 12 - above even the repo map. A small model that cannot
+            # see its own changes re-does them: it added the same function
+            # three times, and stopped after one file believing it was done.
+            # Its own diff is the cheapest possible correction, and unlike a
+            # prompt instruction the model cannot forget to consult it.
+            sections.append(Section("work_so_far", 12, work))
         return sections
+
+    def _work_so_far(self) -> str:
+        """The cumulative diff for this run, bounded."""
+        if self._repo is None or not self._base_ref:
+            return ""
+        try:
+            diff = self._repo.diff(base=self._base_ref)
+        except Exception:  # noqa: BLE001 - context is best-effort, never fatal
+            return ""
+        if not diff.strip():
+            return ""
+
+        if len(diff) > self._max_diff_chars:
+            # Keep the head: hunk headers and the first changes carry more
+            # signal than the tail of a long diff.
+            diff = diff[: self._max_diff_chars] + "\n... [diff truncated]"
+
+        return (
+            "# WORK YOU HAVE ALREADY DONE IN THIS TASK\n"
+            "These changes are already applied and committed. Do NOT repeat "
+            "them. Move on to the parts of the task not yet done.\n\n"
+            f"{diff}"
+        )
 
 
 def _attach_commits(runtime: Any, session: GitSession, context: CodingContext) -> None:
