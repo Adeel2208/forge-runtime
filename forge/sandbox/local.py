@@ -129,9 +129,7 @@ class LocalSandbox:
         }
         # A new process group / session is what makes tree-kill possible.
         if _IS_WINDOWS:
-            popen_kwargs["creationflags"] = (
-                subprocess.CREATE_NEW_PROCESS_GROUP | _CREATE_SUSPENDED_IF_NEEDED
-            )
+            popen_kwargs["creationflags"] = _NEW_PROCESS_GROUP
         else:
             popen_kwargs["start_new_session"] = True
             popen_kwargs["preexec_fn"] = self._limiter.preexec(limits)
@@ -189,9 +187,12 @@ class LocalSandbox:
         )
 
 
-# Windows needs no suspend for our purposes; kept as a named zero so the
-# creationflags expression above reads clearly.
-_CREATE_SUSPENDED_IF_NEEDED = 0
+# Resolved once, guarded by `sys.platform` so mypy narrows it away on Unix:
+# `subprocess.CREATE_NEW_PROCESS_GROUP` does not exist in Linux typeshed.
+if sys.platform == "win32":
+    _NEW_PROCESS_GROUP = subprocess.CREATE_NEW_PROCESS_GROUP
+else:
+    _NEW_PROCESS_GROUP = 0
 
 
 def _kill_tree(proc: subprocess.Popen[Any]) -> None:

@@ -79,10 +79,24 @@ warn_unreachable = true
 disallow_any_generics = true
 plugins = []
 
-# pywin32 ships no type stubs and is a Windows-only optional import.
+# Optional or platform-specific imports with no stubs available.
 [[tool.mypy.overrides]]
-module = ["win32job", "win32api", "win32con", "psutil"]
+module = [
+    "win32job", "win32api", "win32con", "psutil",
+    "opentelemetry", "opentelemetry.*",   # only present with the `otel` extra
+]
 ignore_missing_imports = true
+
+# Platform-specific modules. mypy analyses one platform at a time, so an
+# ignore that is REQUIRED on Windows is flagged as unused on Linux, and a
+# `sys.platform` guard makes the other branch unreachable. Relaxing these two
+# warnings for the handful of genuinely platform-split files is what lets the
+# same source type-check on both - the alternative is a config that is only
+# ever correct on the machine it was last run on.
+[[tool.mypy.overrides]]
+module = ["forge.sandbox.local", "forge.coding.ui"]
+warn_unused_ignores = false
+warn_unreachable = false
 
 [[tool.mypy.overrides]]
 module = ["tests.*"]

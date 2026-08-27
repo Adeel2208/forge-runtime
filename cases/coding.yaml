@@ -7,6 +7,9 @@
 #
 #   forge eval run cases/coding.yaml --target coding
 #
+# Requires a real model and --target coding. The mock provider cannot
+# satisfy these, so CI runs cases/agent-core.yaml instead.
+#
 # These are deliberately ordered by difficulty, and the harder ones are
 # expected to fail on a small local model. That is the point: the suite
 # measures where the boundary is, so a model or prompt change can be shown

@@ -48,12 +48,16 @@ jobs:
       - name: Harness meta-tests (negative fixtures)
         run: pytest tests/eval -q
 
-      - name: Validate the case set
+      - name: Validate every case set
         run: python -m forge.cli eval validate cases/
 
+      # agent-core only. cases/coding.yaml drives a real model against a real
+      # repository (--target coding) and cannot be satisfied by the mock
+      # provider CI runs on; pointing the whole directory at --target
+      # inprocess fails six cases for the wrong reason.
       - name: Run the evaluation harness
         run: |
-          python -m forge.cli eval run cases/ --target inprocess --out reports/ci-eval
+          python -m forge.cli eval run cases/agent-core.yaml --target inprocess --out reports/ci-eval
           cat reports/ci-eval/report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Failure-injection benchmark
