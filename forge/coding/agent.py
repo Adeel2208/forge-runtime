@@ -334,6 +334,32 @@ def _attach_progress(
 ) -> None:
     """Commit and report progress, for an interactive front end."""
     _attach_commits(runtime, session, context)
+
+    # Effects are appended straight to the store rather than through `_emit`,
+    # because the append *is* the idempotency claim and carries the key that
+    # `_emit` has no parameter for. Widening the runtime's most safety-critical
+    # path for the sake of a progress line would be the wrong trade, so
+    # completion is reported from the commit hook instead - which is also the
+    # more honest signal: it fires when the step is durably recorded, not when
+    # a tool merely returned.
+    after_commit = runtime._checkpoint
+
+    async def checkpoint_and_report(run_id: str, state: Any) -> None:
+        before = len(state.observations)
+        await after_commit(run_id, state)
+        if state.observations:
+            last = state.observations[-1]
+            on_step(
+                EventType.STEP_COMMITTED,
+                {
+                    "tool": last.get("tool"),
+                    "index": state.step_index,
+                    "ok": True,
+                    "new": len(state.observations) != before,
+                },
+            )
+
+    runtime._checkpoint = checkpoint_and_report
     original = runtime._emit
 
     async def emit_and_report(type_: EventType, run_id: str, **kwargs: Any) -> int:

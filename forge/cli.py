@@ -656,6 +656,102 @@ def ui(
     )
 
 
+def _open_app_window(url: str) -> bool:
+    """Open `url` in a chromeless window, so it reads as an application.
+
+    Chromium's `--app=` gives a window with no tabs, address bar or bookmarks -
+    which is the whole visual difference between "a website" and "a program",
+    without a bundler, a Node toolchain or a 200MB runtime. If no Chromium is
+    installed we fall back to an ordinary tab: worse, but never broken.
+    """
+    import shutil
+    import subprocess
+
+    candidates = (
+        "chrome", "google-chrome", "google-chrome-stable", "chromium",
+        "chromium-browser", "msedge", "brave",
+    )
+    windows_paths = (
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    )
+    found = next((shutil.which(c) for c in candidates if shutil.which(c)), None)
+    if found is None:
+        found = next((p for p in windows_paths if Path(p).exists()), None)
+    if found is None:
+        return False
+    with contextlib.suppress(Exception):
+        subprocess.Popen(
+            [found, f"--app={url}", "--window-size=1440,900"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    return False
+
+
+@app.command()
+def studio(
+    port: Annotated[int, typer.Option(help="Port to serve on.")] = 8080,
+    window: Annotated[
+        bool, typer.Option("--window/--tab", help="Chromeless window, or a browser tab.")
+    ] = True,
+) -> None:
+    """Open FORGE Studio - the editor, the agent and the diff in one window.
+
+    This is the whole product in one command: it serves the app, mints a key
+    for the session, and opens a window on the repository you are standing in.
+    """
+    import os
+    import secrets
+    import threading
+    import webbrowser
+
+    try:
+        import uvicorn
+    except ImportError:
+        _echo('\n  the api extra is not installed:  pip install "forge-runtime[api]"\n')
+        raise typer.Exit(2) from None
+
+    from forge.coding.git import GitRepo
+
+    repo = Path.cwd()
+    is_root = False
+    with contextlib.suppress(Exception):
+        is_root = GitRepo(repo).is_repo_root
+    if not is_root:
+        _echo("")
+        _echo(f"  {repo} is not the root of a git repository.")
+        _echo("  Studio edits and branches a repository, so it needs one:")
+        _echo(f"    git init {repo}")
+        _echo("  or cd to the root of an existing repository and try again.")
+        _echo("")
+        raise typer.Exit(2)
+
+    if not os.environ.get("FORGE_API_KEYS", "").strip():
+        os.environ["FORGE_API_KEYS"] = f"studio:{secrets.token_urlsafe(18)}"
+    token = os.environ["FORGE_API_KEYS"].split(":", 1)[1]
+    os.environ["FORGE_REPO"] = str(repo)
+    url = f"http://127.0.0.1:{port}/code"
+
+    _echo("")
+    _echo(f"  FORGE Studio   {repo.name}")
+    _echo(f"  url            {url}")
+    _echo(f"  key            {token}")
+    _echo("")
+
+    def launch() -> None:
+        if not (window and _open_app_window(url)):
+            webbrowser.open(url)
+
+    threading.Timer(1.5, launch).start()
+    uvicorn.run(
+        "forge.api:create_app", factory=True, host="127.0.0.1", port=port,
+        timeout_graceful_shutdown=30,
+    )
+
+
 @app.command()
 def doctor(
     config_path: Annotated[

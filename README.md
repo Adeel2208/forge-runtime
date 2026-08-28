@@ -21,8 +21,21 @@ Python 3.11+. Nothing to configure, and no API key needed to see it work.
 ```bash
 pip install "forge-runtime[api] @ git+https://github.com/Adeel2208/forge-runtime"
 
+cd your-project
+forge studio    # the editor, the agent and the diff, in one window
+```
+
+`forge studio` serves the app, mints a key for the session, and opens a
+chromeless window on the repository you are standing in. Files on the left,
+code and diffs in the middle, the agent on the right. `Ctrl+K` for commands,
+`Ctrl+P` to jump to a file, `Ctrl+Shift+F` to search, `Ctrl+S` to save.
+
+Nothing the agent writes reaches your branch until you read the diff and press
+Merge — each task lands on its own branch, exactly as it does in the terminal.
+
+```bash
 forge demo      # kills a worker mid-write, resumes it, proves 0 duplicate effects
-forge ui        # opens the console in your browser
+forge ui        # the run console: every phase, permit and effect of a run
 ```
 
 `forge ui` mints a key for the session, prints it, and opens the page. The

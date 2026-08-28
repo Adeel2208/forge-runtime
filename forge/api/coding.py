@@ -35,6 +35,21 @@ MAX_FILE_BYTES = 400_000
 MAX_TREE_ENTRIES = 4_000
 
 
+class SaveRequest(BaseModel):
+    """Module scope, not inside the router factory.
+
+    `from __future__ import annotations` makes every annotation a string, and
+    FastAPI resolves those against the *module* namespace. A model declared
+    inside the factory is invisible there, so FastAPI quietly demotes the
+    parameter to a query field and every call 422s with what looks like a
+    client error but is ours. `forge/api/app.py` documents the same trap for
+    its dependency alias; I walked straight into it anyway.
+    """
+
+    path: str = Field(min_length=1)
+    content: str
+
+
 class TaskRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=8_000)
     max_steps: int | None = Field(default=None, ge=1, le=60)
@@ -53,6 +68,9 @@ class Task:
     files: list[str] = field(default_factory=list)
     diff_stat: str = ""
     base_ref: str = ""
+    progress: list[dict[str, Any]] = field(default_factory=list)
+    """Live trace of the run, for the app to render while it works."""
+
     error: str | None = None
     merged: bool = False
     discarded: bool = False
@@ -62,7 +80,7 @@ class Task:
             "id": self.id, "goal": self.goal, "status": self.status,
             "run_id": self.run_id, "branch": self.branch, "commits": self.commits,
             "files": self.files, "diff_stat": self.diff_stat, "error": self.error,
-            "base_ref": self.base_ref,
+            "base_ref": self.base_ref, "progress": self.progress,
             "merged": self.merged, "discarded": self.discarded,
         }
 
@@ -144,6 +162,37 @@ class CodingService:
         except UnicodeDecodeError:
             return {"path": relative, "binary": True, "content": ""}
 
+    def write_file(self, relative: str, content: str) -> dict[str, Any]:
+        """Save an edit from the editor.
+
+        The agent is not the only one who may change this repository - the
+        person watching it is entitled to fix a line themselves. Writes land
+        in the working tree exactly as an editor's would, so git sees them as
+        ordinary uncommitted changes and nothing about the branch model
+        changes.
+        """
+        target = self._safe(relative)
+        if not target.parent.exists():
+            raise HTTPException(status_code=400, detail="directory does not exist")
+        target.write_text(content, encoding="utf-8", newline="")
+        return {"path": relative, "bytes": len(content.encode("utf-8"))}
+
+    def search(self, query: str, limit: int = 200) -> list[dict[str, Any]]:
+        """Grep the tracked files, via git so ignored paths stay ignored."""
+        if not query.strip():
+            return []
+        try:
+            raw = self.agent.repo.run("grep", "-n", "-I", "--fixed-strings", query)
+        except GitError:
+            return []  # git grep exits non-zero when there are no matches
+        hits: list[dict[str, Any]] = []
+        for line in raw.splitlines()[:limit]:
+            path, _, rest = line.partition(":")
+            number, _, text = rest.partition(":")
+            if number.isdigit():
+                hits.append({"path": path, "line": int(number), "text": text[:220]})
+        return hits
+
     # -- tasks -----------------------------------------------------------
 
     def start(self, goal: str, max_steps: int | None) -> Task:
@@ -158,9 +207,41 @@ class CodingService:
         self._running = asyncio.create_task(self._execute(task, max_steps))
         return task
 
+    def _note(self, task: Task, kind: str, text: str) -> None:
+        task.progress.append({"kind": kind, "text": text})
+        del task.progress[:-200]  # a long run should not grow without bound
+
+    def _on_step(self, task: Task) -> Any:
+        """Translate runtime events into lines worth watching.
+
+        Only what answers "is it working, and on what". The full log is
+        already available through the run console; repeating it here would
+        make the pane unreadable at exactly the moment it matters.
+        """
+        def hook(event_type: Any, payload: dict[str, Any]) -> None:
+            name = getattr(event_type, "value", str(event_type))
+            tool = payload.get("tool")
+            if name == "STEP_COMMITTED":
+                self._note(task, "ok", f"step {payload.get('index', '')} "
+                                       f"ran {tool or 'a tool'}".strip())
+            elif name == "PROPOSAL_RECEIVED" and tool:
+                self._note(task, "plan", f"proposes {tool}")
+            elif name == "EFFECT_OBSERVED" and tool:
+                self._note(task, "ok" if payload.get("ok") else "bad",
+                           f"{'ran' if payload.get('ok') else 'failed'} {tool}")
+            elif name == "EFFECT_REUSED" and tool:
+                self._note(task, "warn", f"skipped {tool} - already done")
+            elif name == "POLICY_DECIDED" and payload.get("decision") == "DENY":
+                self._note(task, "warn", f"refused {payload.get('capability', '')}")
+            elif name == "LOOP_DETECTED":
+                self._note(task, "warn", "looping - " + str(payload.get("action", "")))
+        return hook
+
     async def _execute(self, task: Task, max_steps: int | None) -> None:
         try:
-            result: CodingResult = await self.agent.run(task.goal, max_steps=max_steps)
+            result: CodingResult = await self.agent.run(
+                task.goal, max_steps=max_steps, on_step=self._on_step(task)
+            )
             task.run_id = result.run.run_id
             task.branch = result.branch
             task.commits = result.commits
@@ -263,6 +344,14 @@ def build_coding_router(service: CodingService) -> APIRouter:
     @router.get("/file")
     async def file(path: str = Query(min_length=1)) -> dict[str, Any]:
         return service.read_file(path)
+
+    @router.put("/file")
+    async def save_file(body: SaveRequest) -> dict[str, Any]:
+        return service.write_file(body.path, body.content)
+
+    @router.get("/search")
+    async def search(q: str = Query(min_length=1, max_length=200)) -> dict[str, Any]:
+        return {"hits": service.search(q)}
 
     @router.get("/tasks")
     async def list_tasks() -> list[dict[str, Any]]:

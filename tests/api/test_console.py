@@ -214,7 +214,7 @@ def test_the_workbench_is_served_when_a_repository_is_mounted(tmp_path) -> None:
     with TestClient(app) as client:
         page = client.get("/code")
         assert page.status_code == 200
-        assert "FORGE workbench" in page.text
+        assert "FORGE Studio" in page.text
 
         tree = client.get("/code/tree").json()
         assert "a.py" in tree["files"]

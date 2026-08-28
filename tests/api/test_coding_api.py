@@ -193,3 +193,51 @@ def test_a_subdirectory_is_refused(tmp_path) -> None:
 
     with pytest.raises(NotARepository):
         CodingService(nested)
+
+
+# -- editing and searching -------------------------------------------------
+
+
+def test_the_editor_can_save_a_file(tmp_path) -> None:
+    """The agent is not the only one allowed to change this repository.
+
+    Writes land in the working tree exactly as an editor's would, so git sees
+    ordinary uncommitted changes and the branch model is untouched.
+    """
+    service = CodingService(_repo(tmp_path))
+    service.write_file("src/calc.py", "def divide(a, b):\n    return b\n")
+
+    assert (service.repo / "src" / "calc.py").read_text(encoding="utf-8").endswith("return b\n")
+    assert "src/calc.py" in service.agent.repo.dirty_files()
+
+
+def test_a_save_cannot_escape_the_repository(tmp_path) -> None:
+    service = CodingService(_repo(tmp_path))
+    with pytest.raises(HTTPException) as caught:
+        service.write_file("../../evil.txt", "x")
+    assert caught.value.status_code == 400
+
+
+def test_search_finds_text_and_reports_line_numbers(tmp_path) -> None:
+    service = CodingService(_repo(tmp_path))
+    hits = service.search("divide")
+    assert hits and hits[0]["path"] == "src/calc.py"
+    assert hits[0]["line"] == 1
+    assert "divide" in hits[0]["text"]
+
+
+def test_search_with_no_matches_is_empty_not_an_error(tmp_path) -> None:
+    """`git grep` exits non-zero when nothing matches; that is not a failure."""
+    service = CodingService(_repo(tmp_path))
+    assert service.search("nothing_matches_this_xyz") == []
+
+
+def test_the_save_model_is_declared_at_module_scope() -> None:
+    """`from __future__ import annotations` makes annotations strings, and
+    FastAPI resolves them against the module namespace. A model declared
+    inside the router factory is invisible there, so every save 422s with
+    what looks like a client error. This repository documents the same trap
+    in `api/app.py`; the check keeps it fixed."""
+    import forge.api.coding as mod
+
+    assert hasattr(mod, "SaveRequest"), "SaveRequest must be importable from the module"
