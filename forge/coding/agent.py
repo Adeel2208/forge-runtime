@@ -127,6 +127,7 @@ class CodingAgent:
         branch_prefix: str = "forge",
         approval: Any = None,
         sandbox: Any = None,
+        conversation: Any = None,
     ) -> None:
         self.workspace = Workspace(Path(repo_path))
         self.repo = GitRepo(self.workspace.root)
@@ -135,6 +136,9 @@ class CodingAgent:
         self.branch_prefix = branch_prefix
         self.approval = approval
         self._sandbox = sandbox
+        # Without this every task starts cold, and a follow-up like "now
+        # also handle negatives" has nothing for "also" to refer to.
+        self.conversation = conversation
         self.isolation: Any = sandbox.isolation if sandbox is not None else None
         self._policy = policy or self._load_policy()
 
@@ -183,6 +187,7 @@ class CodingAgent:
         )
         compiler = _CodingCompiler(
             self.workspace,
+            conversation=self.conversation,
             repo=self.repo,
             base_ref=session.base_ref,
             token_budget=6000,
@@ -245,6 +250,7 @@ class _CodingCompiler(ContextCompiler):
         *,
         repo: Any = None,
         base_ref: str = "",
+        conversation: Any = None,
         token_budget: int = 6000,
         max_diff_chars: int = 2500,
     ) -> None:
@@ -254,6 +260,7 @@ class _CodingCompiler(ContextCompiler):
         self._repo = repo
         self._base_ref = base_ref
         self._max_diff_chars = max_diff_chars
+        self._conversation = conversation
 
     def _candidates(self, state: Any, tool_schemas: Any, budget_note: str) -> Any:
         from forge.context.compiler import Section
@@ -262,6 +269,16 @@ class _CodingCompiler(ContextCompiler):
         # Priority 15: after the goal, before the tool list. The model needs to
         # know what exists before it can be told what it may do.
         sections.append(Section("repo_map", 15, self._map))
+
+        # Priority 14: below the running diff, above the repo map. What you
+        # changed this run matters more than what you changed last task, and
+        # both matter more than the file layout - but a follow-up instruction
+        # is meaningless without the turn it refers to, so this cannot be the
+        # first thing dropped when the budget is tight.
+        if self._conversation is not None and len(self._conversation):
+            history = self._conversation.render(budget_tokens=900)
+            if history:
+                sections.append(Section("conversation", 14, history))
 
         work = self._work_so_far()
         if work:

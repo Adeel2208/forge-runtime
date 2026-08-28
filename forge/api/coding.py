@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from forge.coding.agent import CodingAgent, CodingResult
 from forge.coding.git import GitError, NotARepository
+from forge.coding.memory import Conversation, Turn
 from forge.config import ForgeConfig, ProviderConfig
 from forge.ids import new_id
 
@@ -126,7 +127,15 @@ class CodingService:
 
     def __init__(self, repo: Path) -> None:
         self.repo = Path(repo).resolve()
-        self.agent = CodingAgent(self.repo, config=_default_config(Path(repo)))
+        # One conversation per session, handed to every agent this service
+        # builds - including the one rebuilt when the model changes, so
+        # switching model mid-session does not amnesia the history.
+        self.conversation = Conversation()
+        self.agent = CodingAgent(
+            self.repo,
+            config=_default_config(Path(repo)),
+            conversation=self.conversation,
+        )
         self.agent.repo.require_repo()
         # The runtime's own state lives in the repository, so without this it
         # shows up as the user's uncommitted change the first time Studio is
@@ -232,7 +241,9 @@ class CodingService:
         providers = config.providers or (ProviderConfig(kind="ollama"),)
         head = replace(providers[0], kind="ollama", model=name)
         self.agent = CodingAgent(
-            self.repo, config=replace(config, providers=(head, *providers[1:]))
+            self.repo,
+            config=replace(config, providers=(head, *providers[1:])),
+            conversation=self.conversation,
         )
         self.agent.repo.require_repo()
         return {"active": name}
@@ -382,6 +393,19 @@ class CodingService:
             task.status = "completed" if result.ok else "failed"
             if not result.ok:
                 task.error = result.run.error
+            # Recorded whatever the outcome: a task that failed is exactly the
+            # context a follow-up needs, and dropping it is how "try that again
+            # differently" ends up repeating the same thing.
+            self.conversation.record(
+                Turn(
+                    goal=task.goal,
+                    status=task.status,
+                    answer=result.run.answer or "",
+                    files=tuple(task.files),
+                    commits=task.commits,
+                    branch=task.branch or "",
+                )
+            )
         except (NotARepository, GitError) as exc:
             task.status, task.error = "failed", str(exc)
         except asyncio.CancelledError:
@@ -390,6 +414,9 @@ class CodingService:
             # this is a state you can read and discard, not work that vanished.
             task.status = "cancelled"
             task.error = "stopped before it finished"
+            self.conversation.record(
+                Turn(goal=task.goal, status="cancelled", branch=task.branch or "")
+            )
             self._note(task, "warn", "stopped")
             raise
         except Exception as exc:
