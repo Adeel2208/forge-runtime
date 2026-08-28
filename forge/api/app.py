@@ -184,7 +184,11 @@ def create_app(
 
         try:
             app.state.coding = CodingService(_Path(repo))
-            app.include_router(build_coding_router(app.state.coding))
+            app.include_router(
+                build_coding_router(
+                    app.state.coding, dependencies=[Depends(_principal)]
+                )
+            )
             log.info("coding surface mounted", repo=str(_Path(repo).resolve()))
         except Exception as exc:
             log.warning("coding surface unavailable", error=str(exc))

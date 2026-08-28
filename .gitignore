@@ -23,3 +23,8 @@ htmlcov/
 
 # Benchmark output is committed deliberately (see reports/), but scratch is not
 reports/scratch/
+
+# Desktop shell: the Electron toolchain is a build dependency, not source.
+desktop/node_modules/
+desktop/dist/
+desktop/package-lock.json

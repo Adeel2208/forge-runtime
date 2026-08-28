@@ -697,6 +697,13 @@ def studio(
     window: Annotated[
         bool, typer.Option("--window/--tab", help="Chromeless window, or a browser tab.")
     ] = True,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            "--open/--no-open",
+            help="Open a window. The desktop app passes --no-open and shows the page itself.",
+        ),
+    ] = True,
 ) -> None:
     """Open FORGE Studio - the editor, the agent and the diff in one window.
 
@@ -745,7 +752,8 @@ def studio(
         if not (window and _open_app_window(url)):
             webbrowser.open(url)
 
-    threading.Timer(1.5, launch).start()
+    if open_browser:
+        threading.Timer(1.5, launch).start()
     uvicorn.run(
         "forge.api:create_app", factory=True, host="127.0.0.1", port=port,
         timeout_graceful_shutdown=30,

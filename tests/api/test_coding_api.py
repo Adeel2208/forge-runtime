@@ -241,3 +241,54 @@ def test_the_save_model_is_declared_at_module_scope() -> None:
     import forge.api.coding as mod
 
     assert hasattr(mod, "SaveRequest"), "SaveRequest must be importable from the module"
+
+
+# -- authorization ---------------------------------------------------------
+
+
+def test_every_coding_endpoint_requires_a_key(tmp_path) -> None:
+    """These endpoints read and write a working tree and start an agent
+    against it. Leaving them open because the server binds to loopback assumes
+    nothing else on the machine is hostile, and a browser visiting the wrong
+    page is enough to break that assumption.
+
+    This shipped open for one commit; the test is what keeps it shut.
+    """
+    import subprocess
+
+    from fastapi.testclient import TestClient
+
+    from forge.api.app import create_app
+    from forge.config import BudgetConfig, ForgeConfig, ProviderConfig
+    from forge.deployment import Forge
+    from forge.llm.mock import MockProvider
+
+    root = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(root), "status"], check=True, capture_output=True)
+
+    config = ForgeConfig(
+        database_url=f"sqlite:///{tmp_path / 'auth.db'}",
+        providers=(ProviderConfig(kind="mock"),),
+        budget=BudgetConfig(max_steps=4),
+    )
+    keys = {"d1a2b0f8a7fbbcb2b3cbeb0ae44e0d6a41ff8b2e0e9d0f4b1f0e7d0a9c1b2d3e": "t"}
+    app = create_app(
+        config, deployment=Forge(config=config, providers=[MockProvider([])]),
+        configure_logs=False, require_auth=True, api_keys=keys, repo=str(root),
+    )
+
+    with TestClient(app) as client:
+        for method, path, body in (
+            ("get", "/code/status", None),
+            ("get", "/code/tree", None),
+            ("get", "/code/file?path=src/calc.py", None),
+            ("get", "/code/search?q=divide", None),
+            ("get", "/code/tasks", None),
+            ("put", "/code/file", {"path": "src/calc.py", "content": "x"}),
+            ("post", "/code/tasks", {"goal": "do a thing"}),
+        ):
+            resp = getattr(client, method)(path, **({"json": body} if body else {}))
+            assert resp.status_code == 401, f"{method.upper()} {path} is not guarded"
+
+        # The page itself stays open: it carries no repository data.
+        assert client.get("/code").status_code == 200

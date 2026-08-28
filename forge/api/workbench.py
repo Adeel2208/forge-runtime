@@ -270,6 +270,14 @@ const store={get(k,d){try{return JSON.parse(localStorage.getItem("fs_"+k))??d}ca
              set(k,v){try{localStorage.setItem("fs_"+k,JSON.stringify(v))}catch(e){}}};
 
 let key=store.get("key","");
+/* The desktop shell mints the key and passes it in the fragment, which is
+   never sent to the server. Consume it once, persist it, and strip it from the
+   address so a copied URL does not carry a credential. */
+(function(){
+  const m=/(?:^|&)key=([^&]+)/.exec(location.hash.replace(/^#/,""));
+  if(m){key=decodeURIComponent(m[1]);store.set("key",key);
+        history.replaceState(null,"",location.pathname+location.search);}
+})();
 let tree=[],tabs=[],active=null,tasks=[],current=null,status={},timer=null,openDirs=new Set();
 
 /* ---------- transport ---------- */

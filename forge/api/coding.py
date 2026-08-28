@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -330,8 +331,18 @@ class CodingService:
         return {"discarded": task.branch}
 
 
-def build_coding_router(service: CodingService) -> APIRouter:
-    router = APIRouter(prefix="/code", tags=["coding"])
+def build_coding_router(
+    service: CodingService, *, dependencies: Sequence[Any] = ()
+) -> APIRouter:
+    """Build the router, guarded by whatever the app authenticates with.
+
+    `dependencies` is not optional in practice and the caller supplies the
+    app's own authenticator. These endpoints read and write a working tree and
+    start an agent against it; leaving them open because the server binds to
+    loopback assumes nothing else on the machine is hostile, and a browser
+    visiting the wrong page is enough to break that assumption.
+    """
+    router = APIRouter(prefix="/code", tags=["coding"], dependencies=list(dependencies))
 
     @router.get("/status")
     async def status() -> dict[str, Any]:

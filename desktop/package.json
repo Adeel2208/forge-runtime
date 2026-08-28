@@ -1,0 +1,33 @@
+{
+  "name": "forge-studio",
+  "productName": "FORGE Studio",
+  "version": "0.6.0",
+  "description": "A coding agent whose work you read before you merge it.",
+  "license": "Apache-2.0",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:dir": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "dev.forge.studio",
+    "productName": "FORGE Studio",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "boot.html", "icon.png", "package.json"],
+    "win": { "target": ["nsis"], "icon": "icon.png" },
+    "mac": { "target": ["dmg"], "icon": "icon.png", "category": "public.app-category.developer-tools" },
+    "linux": { "target": ["AppImage", "deb"], "icon": "icon.png", "category": "Development" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
