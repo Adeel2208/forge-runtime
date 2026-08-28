@@ -28,6 +28,10 @@ WORKBENCH_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FORGE Studio</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#16202b">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <style>
 :root{
   --bg:#eceef1;--panel:#f6f7f9;--raise:#fff;--ink:#12171d;--soft:#48535f;
@@ -109,9 +113,19 @@ textarea{resize:none}
 #stage{flex:1;min-height:0;overflow:auto;background:var(--raise);position:relative}
 pre{margin:0;padding:12px 14px 60px;font-size:12.5px;line-height:1.6;tab-size:4;
   white-space:pre;min-height:100%}
-#edit{position:absolute;inset:0;width:100%;height:100%;padding:12px 14px 60px;
-  border:0;border-radius:0;font-size:12.5px;line-height:1.6;tab-size:4;
-  white-space:pre;overflow:auto;background:var(--raise);display:none}
+#pane{position:absolute;inset:0;display:none;grid-template-columns:auto 1fr}
+#gutter{padding:12px 8px 60px 12px;text-align:right;color:var(--muted);opacity:.55;
+  font-size:12.5px;line-height:1.6;user-select:none;overflow:hidden;
+  background:var(--raise);border-right:1px solid var(--line);white-space:pre}
+#edit{padding:12px 14px 60px;border:0;border-radius:0;font-size:12.5px;
+  line-height:1.6;tab-size:4;white-space:pre;overflow:auto;background:var(--raise);
+  resize:none;width:100%;height:100%}
+#find{position:absolute;top:8px;right:18px;display:none;gap:6px;align-items:center;
+  background:var(--panel);border:1px solid var(--line);border-radius:7px;
+  padding:6px 8px;box-shadow:0 8px 22px -12px rgba(0,0,0,.5);z-index:5}
+#find input{width:190px;font-size:12px;padding:4px 8px}
+#find .n{font-size:11px;color:var(--muted);white-space:nowrap}
+mark{background:var(--gold);color:#000}
 .ln{color:var(--muted);user-select:none;display:inline-block;width:3.4em;
   text-align:right;padding-right:1.2em;opacity:.5}
 .kw{color:var(--kw)}.str{color:var(--str)}.num{color:var(--num)}
@@ -184,6 +198,7 @@ pre{margin:0;padding:12px 14px 60px;font-size:12.5px;line-height:1.6;tab-size:4;
     <span id="branch" class="chip"></span>
     <span id="dirty" class="chip"></span>
     <span class="grow"></span>
+    <button class="x" id="install" style="display:none">Install app</button>
     <button class="x" id="cmd">⌘K Commands</button>
     <input class="x mono" id="key" type="password" placeholder="API key"
            style="width:110px;font-size:11px" autocomplete="off">
@@ -207,7 +222,13 @@ pre{margin:0;padding:12px 14px 60px;font-size:12.5px;line-height:1.6;tab-size:4;
           <kbd>Ctrl</kbd>+<kbd>P</kbd> files &nbsp;·&nbsp;
           <kbd>Ctrl</kbd>+<kbd>S</kbd> save
         </div>
-        <textarea id="edit" spellcheck="false" class="mono"></textarea>
+        <div id="find">
+          <input id="findq" placeholder="Find in file…" autocomplete="off">
+          <span class="n" id="findn"></span>
+          <button id="findprev">↑</button><button id="findnext">↓</button>
+          <button id="findx">Close</button>
+        </div>
+        <div id="pane"><pre id="gutter" class="mono"></pre><textarea id="edit" spellcheck="false" class="mono"></textarea></div>
       </div>
     </div>
     <div class="gut" id="gr"></div>
@@ -306,26 +327,26 @@ function drawTabs(){
 /* ---------- stage ---------- */
 function render(){
   drawTabs();
-  const t=tabOf(active),stage=$("stage"),ed=$("edit");
-  const old=stage.querySelector("pre, .empty");if(old)old.remove();
-  ed.style.display="none";
+  const t=tabOf(active),stage=$("stage"),ed=$("edit"),pane=$("pane");
+  const old=stage.querySelector("pre.view, .empty");if(old)old.remove();
+  pane.style.display="none";closeFind();
   if(!t){
     stage.insertAdjacentHTML("afterbegin",
       '<div class="empty">Open a file, or describe a change on the right.<br><br>'+
-      '<kbd>Ctrl</kbd>+<kbd>K</kbd> commands &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>P</kbd> files'+
-      ' &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>S</kbd> save</div>');
+      '<kbd>Ctrl</kbd>+<kbd>K</kbd> commands &nbsp;&middot;&nbsp; <kbd>Ctrl</kbd>+<kbd>P</kbd> files'+
+      ' &nbsp;&middot;&nbsp; <kbd>Ctrl</kbd>+<kbd>F</kbd> find &nbsp;&middot;&nbsp; '+
+      '<kbd>Ctrl</kbd>+<kbd>S</kbd> save</div>');
     $("b-pos").textContent="";return;
   }
   if(t.kind==="file"){
-    ed.style.display="block";ed.value=t.content;
-    ed.oninput=()=>{const x=tabOf(t.id);if(!x)return;x.content=ed.value;
+    pane.style.display="grid";ed.value=t.content;gutter();
+    ed.oninput=()=>{const x=tabOf(t.id);if(!x)return;x.content=ed.value;gutter();
       if(!x.dirty){x.dirty=true;drawTabs()}};
-    ed.onkeyup=ed.onclick=()=>{
-      const upto=ed.value.slice(0,ed.selectionStart).split("\\n");
-      $("b-pos").textContent="Ln "+upto.length+", Col "+(upto[upto.length-1].length+1);};
-    $("b-pos").textContent="Ln 1, Col 1";
+    ed.onscroll=()=>{$("gutter").scrollTop=ed.scrollTop};
+    ed.onkeyup=ed.onclick=caret;
+    caret();
   }else{
-    stage.insertAdjacentHTML("afterbegin","<pre>"+t.html+"</pre>");
+    stage.insertAdjacentHTML("afterbegin",'<pre class="view">'+t.html+"</pre>");
     $("b-pos").textContent="";
   }
   document.querySelectorAll(".node").forEach(n=>
@@ -440,6 +461,7 @@ const COMMANDS=[
   {n:"Open file…",k:"Ctrl+P",run:()=>palette("file")},
   {n:"Search in repository…",k:"Ctrl+Shift+F",run:()=>palette("grep")},
   {n:"Save file",k:"Ctrl+S",run:saveActive},
+  {n:"Find in file…",k:"Ctrl+F",run:()=>openFind()},
   {n:"Close tab",k:"Ctrl+W",run:()=>active&&closeTab(active)},
   {n:"Give the agent a task",k:"Ctrl+Enter",run:()=>$("goal").focus()},
   {n:"Review latest diff",run:()=>tasks[0]&&openDiff(tasks[0].id)},
@@ -502,6 +524,7 @@ document.addEventListener("keydown",e=>{
   else if(mod&&e.key.toLowerCase()==="p"){e.preventDefault();palette("file")}
   else if(mod&&e.shiftKey&&e.key.toLowerCase()==="f"){e.preventDefault();palette("grep")}
   else if(mod&&e.key.toLowerCase()==="s"){e.preventDefault();saveActive()}
+  else if(mod&&!e.shiftKey&&e.key.toLowerCase()==="f"){e.preventDefault();openFind()}
   else if(mod&&e.key.toLowerCase()==="w"){e.preventDefault();active&&closeTab(active)}
   else if(mod&&e.key==="Enter"){e.preventDefault();$("send").click()}
 });
@@ -519,6 +542,90 @@ $("goal").onkeydown=e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey))$("send").cli
 $("save").onclick=()=>{key=$("key").value.trim();store.set("key",key);refresh();toast("Key saved","ok")};
 $("key").value=key;
 $("key").onkeydown=e=>{if(e.key==="Enter")$("save").click()};
+
+/* ---------- editor mechanics ---------- */
+function gutter(){
+  const n=$("edit").value.split("\n").length;
+  let s="";for(let i=1;i<=n;i++)s+=i+"\n";
+  $("gutter").textContent=s;
+}
+function caret(){
+  const ed=$("edit"),upto=ed.value.slice(0,ed.selectionStart).split("\n");
+  $("b-pos").textContent="Ln "+upto.length+", Col "+(upto[upto.length-1].length+1);
+}
+/* Tab indents instead of leaving the editor, and Enter keeps the indent.
+   Losing your place because Tab moved focus is the single most irritating
+   thing an unimproved textarea does. */
+$("edit").addEventListener("keydown",e=>{
+  const ed=$("edit");
+  if(e.key==="Tab"){
+    e.preventDefault();
+    const s=ed.selectionStart,en=ed.selectionEnd;
+    ed.value=ed.value.slice(0,s)+"    "+ed.value.slice(en);
+    ed.selectionStart=ed.selectionEnd=s+4;ed.dispatchEvent(new Event("input"));
+  }else if(e.key==="Enter"){
+    const s=ed.selectionStart,line=ed.value.slice(0,s).split("\n").pop();
+    const pad=(line.match(/^[ \t]*/)||[""])[0]+(/[:{[(]\s*$/.test(line)?"    ":"");
+    if(pad){
+      e.preventDefault();
+      ed.value=ed.value.slice(0,s)+"\n"+pad+ed.value.slice(ed.selectionEnd);
+      ed.selectionStart=ed.selectionEnd=s+1+pad.length;
+      ed.dispatchEvent(new Event("input"));
+    }
+  }
+});
+
+/* ---------- find in file ---------- */
+let findHits=[],findAt=0;
+function openFind(){
+  const t=tabOf(active);if(!t||t.kind!=="file")return;
+  $("find").style.display="flex";$("findq").focus();$("findq").select();runFind();
+}
+function closeFind(){$("find").style.display="none";findHits=[]}
+function runFind(){
+  const q=$("findq").value,ed=$("edit");
+  findHits=[];
+  if(q){let i=ed.value.indexOf(q);while(i>=0){findHits.push(i);i=ed.value.indexOf(q,i+q.length)}}
+  findAt=0;
+  $("findn").textContent=q?(findHits.length?"1 / "+findHits.length:"no matches"):"";
+  if(findHits.length)jumpFind(0);
+}
+function jumpFind(d){
+  if(!findHits.length)return;
+  findAt=(findAt+d+findHits.length)%findHits.length;
+  const ed=$("edit"),at=findHits[findAt],q=$("findq").value;
+  ed.focus();ed.setSelectionRange(at,at+q.length);
+  const upto=ed.value.slice(0,at).split("\n").length;
+  const total=ed.value.split("\n").length;
+  ed.scrollTop=Math.max(0,(upto-8)*(ed.scrollHeight/total));
+  $("findn").textContent=(findAt+1)+" / "+findHits.length;caret();
+}
+$("findq").oninput=runFind;
+$("findq").onkeydown=e=>{
+  if(e.key==="Escape")closeFind();
+  else if(e.key==="Enter"){e.preventDefault();jumpFind(e.shiftKey?-1:1)}
+};
+$("findnext").onclick=()=>jumpFind(1);
+$("findprev").onclick=()=>jumpFind(-1);
+$("findx").onclick=closeFind;
+
+/* ---------- installability ---------- */
+let installPrompt=null;
+window.addEventListener("beforeinstallprompt",e=>{
+  e.preventDefault();installPrompt=e;$("install").style.display="";
+});
+$("install").onclick=async()=>{
+  if(!installPrompt)return;
+  $("install").style.display="none";
+  installPrompt.prompt();
+  const choice=await installPrompt.userChoice;
+  installPrompt=null;
+  toast(choice.outcome==="accepted"?"Installed - look for FORGE in your apps":"Not installed");
+};
+window.addEventListener("appinstalled",()=>{$("install").style.display="none"});
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("/sw.js").catch(()=>{/* blocked; the app still runs */});
+}
 
 /* resizable panes, remembered */
 function drag(handle,varName,storeKey,invert){

@@ -23,12 +23,23 @@ pip install "forge-runtime[api] @ git+https://github.com/Adeel2208/forge-runtime
 
 cd your-project
 forge studio    # the editor, the agent and the diff, in one window
+forge install   # add it to the Start Menu / Applications
 ```
 
 `forge studio` serves the app, mints a key for the session, and opens a
 chromeless window on the repository you are standing in. Files on the left,
 code and diffs in the middle, the agent on the right. `Ctrl+K` for commands,
-`Ctrl+P` to jump to a file, `Ctrl+Shift+F` to search, `Ctrl+S` to save.
+`Ctrl+P` to jump to a file, `Ctrl+F` to find, `Ctrl+Shift+F` to search the
+repository, `Ctrl+S` to save.
+
+**It installs.** Studio ships a web app manifest and a service worker, so the
+Install button in its title bar gives it a real application window, its own
+icon, and an entry in your applications list. `forge install` adds the
+launcher that starts the server too, so the icon works from a cold machine.
+
+There is no Electron and no bundler: a desktop build would need Node or Rust
+and a packaging step, and `pip install` staying the only build step is worth
+more than native menus.
 
 Nothing the agent writes reaches your branch until you read the diff and press
 Merge — each task lands on its own branch, exactly as it does in the terminal.

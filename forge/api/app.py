@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from forge import __version__
 from forge.api.dashboard import DASHBOARD_HTML
+from forge.api.pwa import ICON_SVG, SERVICE_WORKER, manifest_json
 from forge.api.security import ApiKeyAuth, Principal, RateLimiter
 from forge.api.workbench import WORKBENCH_HTML
 from forge.config import ForgeConfig
@@ -355,6 +356,29 @@ def create_app(
         not widen what an anonymous caller can read.
         """
         return HTMLResponse(DASHBOARD_HTML)
+
+    # -- installability ----------------------------------------------------
+    # These three are what let a browser offer "Install", after which Studio
+    # gets a Start Menu entry, its own window and its own icon. All three are
+    # unauthenticated on purpose: none of them carries repository data.
+
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    async def manifest() -> Response:
+        return Response(manifest_json(), media_type="application/manifest+json")
+
+    @app.get("/sw.js", include_in_schema=False)
+    async def service_worker() -> Response:
+        # No-store: a cached service worker is how an app gets stuck on an old
+        # shell for as long as the browser feels like it.
+        return Response(
+            SERVICE_WORKER,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store", "Service-Worker-Allowed": "/"},
+        )
+
+    @app.get("/icon.svg", include_in_schema=False)
+    async def icon() -> Response:
+        return Response(ICON_SVG, media_type="image/svg+xml")
 
     @app.get("/code", include_in_schema=False)
     async def workbench() -> HTMLResponse:

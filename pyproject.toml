@@ -94,7 +94,7 @@ ignore_missing_imports = true
 # same source type-check on both - the alternative is a config that is only
 # ever correct on the machine it was last run on.
 [[tool.mypy.overrides]]
-module = ["forge.sandbox.local", "forge.coding.ui"]
+module = ["forge.sandbox.local", "forge.coding.ui", "forge.desktop"]
 warn_unused_ignores = false
 warn_unreachable = false
 

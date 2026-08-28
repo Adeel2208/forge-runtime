@@ -753,6 +753,46 @@ def studio(
 
 
 @app.command()
+def install(
+    port: Annotated[int, typer.Option(help="Port the shortcut will serve on.")] = 8080,
+) -> None:
+    """Add FORGE Studio to this machine's applications.
+
+    Creates a launcher for the repository you are standing in, so Studio opens
+    from the Start Menu or Applications rather than from a terminal. Studio
+    itself is also installable from its own window - the button appears in the
+    title bar - which gives it an icon and a window of its own.
+    """
+    from forge.coding.git import GitRepo
+    from forge.desktop import install_shortcut
+
+    repo = Path.cwd()
+    is_root = False
+    with contextlib.suppress(Exception):
+        is_root = GitRepo(repo).is_repo_root
+    if not is_root:
+        _echo("")
+        _echo(f"  {repo} is not the root of a git repository.")
+        _echo("  Studio launches against one repository; cd to its root first.")
+        _echo("")
+        raise typer.Exit(2)
+
+    entry = install_shortcut(repo, port=port)
+    _echo("")
+    if entry.created:
+        _echo(f"  installed   {entry.path.name}")
+        _echo(f"  location    {entry.path.parent}")
+        _echo(f"  opens       {entry.repo}")
+        _echo("")
+        _echo("  Launch it from your applications menu. Inside Studio, the")
+        _echo("  Install button gives it its own window and icon.")
+    else:
+        _echo(f"  could not create a shortcut: {entry.note}")
+        _echo(f"  you can still run it directly:  {entry.target}")
+    _echo("")
+
+
+@app.command()
 def doctor(
     config_path: Annotated[
         Path | None, typer.Option("--config", help="forge.toml to inspect.")
