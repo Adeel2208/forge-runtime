@@ -443,12 +443,92 @@ def serve(
         _echo('\n  the api extra is not installed:  pip install "forge-runtime[api]"\n')
         raise typer.Exit(2) from None
 
+    _announce(host, port)
     uvicorn.run(
         "forge.api:create_app",
         factory=True,
         host=host,
         port=port,
         reload=reload,
+        timeout_graceful_shutdown=30,
+    )
+
+
+def _announce(host: str, port: int) -> None:
+    """Say where the console is, and whether anything is guarding it.
+
+    Starting without `FORGE_API_KEYS` silently disabled auth and printed
+    nothing, which on a service that executes tools and spends money is a
+    footgun rather than a convenience. It stays permitted - it is genuinely
+    useful on a laptop - but it is no longer quiet, and binding a keyless
+    service to anything other than loopback is refused outright.
+    """
+    import os
+
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    keys = os.environ.get("FORGE_API_KEYS", "").strip()
+
+    _echo("")
+    _echo(f"  console   http://{shown}:{port}")
+    _echo(f"  api       http://{shown}:{port}/docs")
+    if keys:
+        _echo("  auth      enabled (FORGE_API_KEYS)")
+    else:
+        _echo("  auth      DISABLED - anyone who can reach this port can run tools")
+        _echo('            set FORGE_API_KEYS="you:some-secret" to require a key')
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            _echo("")
+            _echo(f"  refusing to bind {host} without authentication.")
+            raise typer.Exit(2)
+    _echo("")
+
+
+@app.command()
+def ui(
+    port: Annotated[int, typer.Option(help="Port to serve on.")] = 8080,
+    open_browser: Annotated[
+        bool, typer.Option("--open/--no-open", help="Open a browser window.")
+    ] = True,
+) -> None:
+    """Open the console: one command, no configuration.
+
+    `serve` is the deployment surface and expects you to bring a key. This is
+    the local one - it mints a key for this session, prints it, and opens the
+    browser at it. Loopback only, and never silently unauthenticated.
+    """
+    import os
+    import secrets
+    import threading
+    import webbrowser
+
+    try:
+        import uvicorn
+    except ImportError:
+        _echo('\n  the api extra is not installed:  pip install "forge-runtime[api]"\n')
+        raise typer.Exit(2) from None
+
+    if not os.environ.get("FORGE_API_KEYS", "").strip():
+        # A fresh secret per session rather than a fixed default: a shipped
+        # default key is a shipped vulnerability the moment someone binds this
+        # to something other than loopback.
+        os.environ["FORGE_API_KEYS"] = f"local:{secrets.token_urlsafe(18)}"
+    key = os.environ["FORGE_API_KEYS"].split(":", 1)[1]
+    url = f"http://127.0.0.1:{port}"
+
+    _echo("")
+    _echo(f"  console   {url}")
+    _echo(f"  key       {key}")
+    _echo("            paste it into the field at the top right, once")
+    _echo("")
+
+    if open_browser:
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(
+        "forge.api:create_app",
+        factory=True,
+        host="127.0.0.1",
+        port=port,
         timeout_graceful_shutdown=30,
     )
 
@@ -495,10 +575,17 @@ def doctor(
                 async with Forge(config=config) as forge:
                     health = await forge.health()
                 for entry in health["providers"]:
-                    state = "reachable" if entry["healthy"] else "NOT reachable"
+                    state = "ready" if entry["healthy"] else "NOT usable"
                     _echo(f"  model               {entry['name']}/{entry['model']}  {state}")
                     if not entry["healthy"]:
-                        problems.append(f"provider {entry['name']} is not reachable")
+                        # Prefer the provider's own diagnosis: it knows whether
+                        # the daemon is down or the model was never pulled, and
+                        # those need entirely different actions.
+                        problems.append(
+                            str(entry.get("detail"))
+                            if entry.get("detail")
+                            else f"provider {entry['name']} is not reachable"
+                        )
             except Exception as exc:
                 _echo(f"  model               could not start: {exc}")
                 problems.append(str(exc))

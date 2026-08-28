@@ -311,9 +311,20 @@ class Forge:
             healthy = True
             with suppress(Exception):
                 healthy = await provider.healthy()
-            providers.append(
-                {"name": provider.name, "model": provider.model, "healthy": healthy}
-            )
+            entry: dict[str, Any] = {
+                "name": provider.name,
+                "model": provider.model,
+                "healthy": healthy,
+            }
+            # A provider that can say *why* it is unusable should; "not
+            # reachable" sends someone to check the network when the real
+            # answer is that they never pulled the model.
+            if not healthy:
+                diagnose = getattr(provider, "diagnose", None)
+                if diagnose is not None:
+                    with suppress(Exception):
+                        entry["detail"] = await diagnose()
+            providers.append(entry)
         return {
             "ok": self._opened and any(p["healthy"] for p in providers),
             "store_open": self._opened,

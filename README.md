@@ -14,6 +14,46 @@ The runtime is a system under test. The harness is how you find out whether it
 
 ---
 
+## Try it
+
+Python 3.11+. Nothing to configure, and no API key needed to see it work.
+
+```bash
+pip install "forge-runtime[api] @ git+https://github.com/Adeel2208/forge-runtime"
+
+forge demo      # kills a worker mid-write, resumes it, proves 0 duplicate effects
+forge ui        # opens the console in your browser
+```
+
+`forge ui` mints a key for the session, prints it, and opens the page. The
+console shows the run list, lets you start a run, and renders the audit trail —
+phases, policy decisions, dispatches, reused effects and denials — which is the
+part of this system worth looking at.
+
+Then point it at your own project and a local model:
+
+```bash
+mkdir myagent && cd myagent
+forge init                    # forge.toml, tools.py, policy.yaml, cases/
+ollama pull qwen3:8b          # any competent local model; see the note below
+forge doctor                  # names what is missing and the command that fixes it
+forge run "Save a note called shopping containing 'milk and eggs'."
+```
+
+`forge doctor` checks the model is actually *pulled*, not just that Ollama is
+running, so it cannot tell you everything is ready and then be contradicted by
+the next command.
+
+> **On PyPI:** not yet published, hence the `git+https` line above. Once it is,
+> that becomes `pip install "forge-runtime[api]"`.
+
+> **On local models:** the runtime is model-agnostic, but a local model has to
+> be able to follow a tool-calling loop and stop when it is done. Measured on a
+> two-step task, `qwen3:8b`, `qwen3.5` and `qwen3:1.7b` complete it correctly;
+> `llama3.2:1b` and `granite3.3:2b` do not. Start with an 8B-class model.
+
+---
+
 ## The runtime
 
 The model only ever *proposes*. The runtime validates, authorizes, dispatches,
@@ -181,7 +221,8 @@ It also pins two behaviours that regress into silent passes easily:
 Python 3.11+. No database to set up, no API key needed to see it work.
 
 ```bash
-pip install forge-runtime            # or: pip install -e ".[dev]"
+pip install "forge-runtime[api] @ git+https://github.com/Adeel2208/forge-runtime"
+# or, from a clone:  pip install -e ".[dev,api]"
 
 forge demo                           # kill a worker mid-write, resume, 0 duplicate effects
 ```
@@ -209,7 +250,7 @@ what would actually run:
 
 ```
   config              forge.toml
-  model               ollama/qwen3:8b  reachable
+  model               ollama/qwen3:8b  ready
   tools               3 from tools:registry
   policy              myapp/1.0.0 from policy.yaml
   capabilities        3/4 granted

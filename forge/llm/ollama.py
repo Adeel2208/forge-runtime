@@ -62,12 +62,39 @@ class OllamaProvider:
             self._client = None
 
     async def healthy(self) -> bool:
+        """Is the daemon up *and* is this model actually present?
+
+        Checking only that the daemon answers is the more obvious
+        implementation and it reports a healthy provider that cannot serve a
+        single request: `ollama serve` is running, the model was never pulled,
+        and the first real call fails with a 404. A diagnostic that says
+        "ready" and is then contradicted by the very next command is worse
+        than no diagnostic, because it sends the user looking in the wrong
+        place.
+        """
+        return await self.diagnose() is None
+
+    async def diagnose(self) -> str | None:
+        """None when usable, otherwise a sentence naming the fix."""
         try:
             client = await self._http()
             resp = await client.get("/api/tags", timeout=3.0)
-            return resp.status_code == 200
+            if resp.status_code != 200:
+                return f"ollama at {self.host} answered {resp.status_code}"
+            names = {str(m.get("name", "")) for m in resp.json().get("models", [])}
         except (httpx.HTTPError, OSError):
-            return False
+            return (
+                f"cannot reach ollama at {self.host} - is it running? "
+                "start it with `ollama serve`"
+            )
+
+        if self.model in names:
+            return None
+        # Ollama treats a bare name as `name:latest`; accept either spelling
+        # rather than telling someone to pull what they already have.
+        if ":" not in self.model and f"{self.model}:latest" in names:
+            return None
+        return f"model {self.model!r} is not pulled - run `ollama pull {self.model}`"
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         payload: dict[str, Any] = {
