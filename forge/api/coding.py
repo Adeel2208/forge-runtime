@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from forge.coding.agent import CodingAgent, CodingResult
 from forge.coding.git import GitError, NotARepository
-from forge.config import ProviderConfig
+from forge.config import ForgeConfig, ProviderConfig
 from forge.ids import new_id
 
 __all__ = ["CodingService", "build_coding_router"]
@@ -96,6 +96,25 @@ class Task:
         }
 
 
+def _default_config(repo: Path) -> ForgeConfig:
+    """Configuration for a repository that has none.
+
+    `ForgeConfig` defaults to the mock provider, which is right for the library
+    and wrong here: opening Studio on a plain repository would show a model
+    called `mock-1` and answer every task with canned text. A coding tool for
+    local models should reach for the local model.
+
+    So with no `forge.toml`, point at Ollama. Which model is a guess, and the
+    picker exists precisely so a guess is cheap to correct - but a guess that
+    can do the work beats a default that cannot.
+    """
+    config = ForgeConfig.load()
+    if any(p.kind != "mock" for p in config.providers):
+        return config
+    del repo
+    return replace(config, providers=(ProviderConfig(kind="ollama", model="qwen3:8b"),))
+
+
 class CodingService:
     """Owns the agent, the task history, and the one-at-a-time rule.
 
@@ -107,7 +126,7 @@ class CodingService:
 
     def __init__(self, repo: Path) -> None:
         self.repo = Path(repo).resolve()
-        self.agent = CodingAgent(self.repo)
+        self.agent = CodingAgent(self.repo, config=_default_config(Path(repo)))
         self.agent.repo.require_repo()
         self.tasks: dict[str, Task] = {}
         self.order: list[str] = []

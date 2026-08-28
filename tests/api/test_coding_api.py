@@ -358,3 +358,31 @@ def test_a_discarded_follow_up_stops_blocking_the_earlier_task(tmp_path) -> None
     service.undo(second.id)
     assert service.stacked_above(first.id) == []
     assert service.accept(first.id)["into"] == "master"
+
+
+def test_a_repository_with_no_config_reaches_for_a_local_model(tmp_path) -> None:
+    """`ForgeConfig` defaults to the mock provider, which is right for the
+    library and wrong for Studio: opening a plain repository would show a model
+    called `mock-1` and answer every task with canned text. The README's
+    documented path is `cd your-project && forge studio`, with no `forge init`
+    in it, so that path has to reach for the local model."""
+    service = CodingService(_repo(tmp_path))
+    kinds = {p.kind for p in service.agent.config.providers}
+
+    assert "mock" not in kinds, "a coding agent must not default to a mock provider"
+    assert service.status()["model"].startswith("ollama/")
+
+
+def test_an_explicit_configuration_is_never_overridden(tmp_path, monkeypatch) -> None:
+    """The default only applies where there is nothing to respect."""
+    from forge.api import coding as mod
+    from forge.config import BudgetConfig, ForgeConfig, ProviderConfig
+
+    chosen = ForgeConfig(
+        providers=(ProviderConfig(kind="openai", model="gpt-4o-mini"),),
+        budget=BudgetConfig(),
+    )
+    monkeypatch.setattr(mod.ForgeConfig, "load", staticmethod(lambda *a, **k: chosen))
+
+    service = CodingService(_repo(tmp_path))
+    assert service.agent.config.providers[0].kind == "openai"

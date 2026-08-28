@@ -14,39 +14,81 @@ The runtime is a system under test. The harness is how you find out whether it
 
 ---
 
-## Try it
+## Install and use it
 
-Python 3.11+. Nothing to configure, and no API key needed to see it work.
+### What you need
+
+| | | why |
+|---|---|---|
+| **Python 3.11+** | required | FORGE is a Python package |
+| **git** | required | every task the agent does lands on a branch |
+| **[Ollama](https://ollama.com)** | required to *use* the agent | it runs the model locally; nothing is sent anywhere |
+
+No API key, no account, no database. The model runs on your machine.
+
+### 1. Install
 
 ```bash
 pip install "forge-runtime[api] @ git+https://github.com/Adeel2208/forge-runtime"
-
-cd your-project
-forge studio    # the editor, the agent and the diff, in one window
-forge install   # add it to the Start Menu / Applications
 ```
 
-`forge studio` serves the app, mints a key for the session, and opens a
-chromeless window on the repository you are standing in. Files on the left,
-code and diffs in the middle, the agent on the right. `Ctrl+K` for commands,
-`Ctrl+P` to jump to a file, `Ctrl+F` to find, `Ctrl+Shift+F` to search the
-repository, `Ctrl+S` to save.
+Not on PyPI yet, hence the git URL. Verify it landed with `forge --help`.
 
-**It installs.** Studio ships a web app manifest and a service worker, so the
-Install button in its title bar gives it a real application window, its own
-icon, and an entry in your applications list. `forge install` adds the
-launcher that starts the server too, so the icon works from a cold machine.
+### 2. Get a model
 
-There is no Electron and no bundler: a desktop build would need Node or Rust
-and a packaging step, and `pip install` staying the only build step is worth
-more than native menus.
+```bash
+ollama pull qwen3:8b        # 5 GB. See "which local models actually work" below.
+```
 
-Nothing the agent writes reaches your branch until you read the diff and press
-Merge — each task lands on its own branch, exactly as it does in the terminal.
+Skip this and Studio still opens — it just has nothing to think with. `forge
+doctor` tells you so, and names the exact command that fixes it.
+
+### 3. Open it on a repository
+
+```bash
+cd your-project             # must be the root of a git repo
+forge studio
+```
+
+That serves the app, mints a key for the session, and opens a window. Files on
+the left, code and diffs in the middle, the agent on the right.
+
+`Ctrl+K` commands · `Ctrl+P` go to file · `Ctrl+F` find · `Ctrl+Shift+F` search
+the repository · `Ctrl+S` save
+
+### 4. Give it a task, then read what it did
+
+Type what you want changed. The agent works on **its own branch**, and the
+panel shows each step as it happens. When it finishes, click a changed file to
+see exactly that file's diff, then press **Merge** — or **Discard**.
+
+**Nothing it writes reaches your branch until you press Merge.** That is the
+whole safety model, and it is not a setting.
+
+### Making it a desktop application
+
+Two ways, and they are independent:
+
+```bash
+forge install     # adds a launcher to your Start Menu / Applications
+```
+
+or use the **Install** button in Studio's own title bar, which gives it an
+application window and its own icon through the web app manifest it ships.
+
+There is also a real Electron build in [`desktop/`](desktop/) for a signed,
+distributable installer — `npm install && npm run dist` produces
+`FORGE Studio Setup 0.6.0.exe` (82 MB), a `.dmg`, or an AppImage. It starts the
+same server and shows the same app, so there is one implementation either way.
+It is **not code-signed**, so Windows SmartScreen warns and macOS refuses
+without notarisation; see [`desktop/README.md`](desktop/README.md).
+
+### Other things to try
 
 ```bash
 forge demo      # kills a worker mid-write, resumes it, proves 0 duplicate effects
 forge ui        # the run console: every phase, permit and effect of a run
+forge doctor    # what this project is configured to do, and what is missing
 ```
 
 `forge ui` mints a key for the session, prints it, and opens the page. The
@@ -259,18 +301,15 @@ It also pins two behaviours that regress into silent passes easily:
 
 ---
 
-## Quick start
+## Building your own agent on it
 
-Python 3.11+. No database to set up, no API key needed to see it work.
+Studio is one thing built on this runtime. If you want a different one — an
+agent with your tools, your policy and your cases — start here instead.
+Installation is the same as above, or from a clone:
 
 ```bash
-pip install "forge-runtime[api] @ git+https://github.com/Adeel2208/forge-runtime"
-# or, from a clone:  pip install -e ".[dev,api]"
-
-forge demo                           # kill a worker mid-write, resume, 0 duplicate effects
+pip install -e ".[dev,api]"
 ```
-
-Then start your own project:
 
 ```bash
 mkdir myagent && cd myagent
@@ -526,23 +565,31 @@ not by reading the code.
 
 ### Honest results
 
-`qwen3:8b`, "add a `subtract` function and a test for it":
+A single-file change — "make `divide` raise `ValueError` when `b` is zero" —
+succeeds on three of the five local models tested, in one or two steps:
 
 ```
-    list_files  .          read_file  src/calc.py          edit_file  src/calc.py
-  status    FAILED (loop detected after 2 identical edits)
-  commits   1
-  files     src/calc.py
+  read_file   src/calc.py
+  edit_file   src/calc.py
+  status      completed   commits 1   files ['src/calc.py']   33s
 ```
 
-It got the function right and committed it. It never reached the test file,
-then repeated itself until the runtime stopped it. **The correct change is on
-a branch; nothing is corrupted; discarding costs one command.** That is the
-realistic outcome today, and it is why the git safety net is the feature
-rather than a nicety.
+The two failures are worth stating plainly, because they are what you will hit
+on a harder task: `qwen3:1.7b` repeated an edit it had already made, and
+`llama3.2:1b` burned five steps without producing a single new observation.
+Both were stopped by the runtime rather than left running.
 
-For harder tasks, point the same agent at a stronger model — the provider
-chain is config, and nothing above it changes.
+Multi-part tasks are still where small models come apart — "add a function
+*and* a test for it" typically gets the function and loses the test. When that
+happens the correct half is on a branch, nothing is corrupted, and discarding
+costs one click. **That is why the git safety net is the feature rather than a
+nicety**, and it is the reason to read the diff before merging rather than
+after.
+
+The measured table is under
+[Which local models actually work](#which-local-models-actually-work); the
+provider chain is config, so pointing the same agent at a stronger model
+changes nothing above it.
 
 ## The sandbox
 
