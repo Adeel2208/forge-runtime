@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from forge import __version__
 from forge.api.dashboard import DASHBOARD_HTML
 from forge.api.security import ApiKeyAuth, Principal, RateLimiter
+from forge.api.workbench import WORKBENCH_HTML
 from forge.config import ForgeConfig
 from forge.core.enums import RunStatus
 from forge.deployment import Forge
@@ -104,6 +105,7 @@ def create_app(
     rate_limit: int = 60,
     enable_supervisor: bool = True,
     configure_logs: bool = True,
+    repo: str | None = None,
 ) -> FastAPI:
     """Build the ASGI app. Collaborators are injectable so it is testable."""
     if configure_logs:
@@ -163,6 +165,28 @@ def create_app(
 
     app.state.auth = auth
     app.state.limiter = limiter
+
+    # The coding surface is mounted only when the server is pointed at a
+    # repository. A deployment serving generic runs gets no endpoints that
+    # read or write a working tree, which is the right default rather than a
+    # setting somebody has to remember to turn off.
+    import os as _os
+
+    # `uvicorn --factory` calls this with no arguments, so the repository
+    # arrives by environment when the CLI starts the server.
+    repo = repo or _os.environ.get("FORGE_REPO") or None
+    app.state.coding = None
+    if repo is not None:
+        from pathlib import Path as _Path
+
+        from forge.api.coding import CodingService, build_coding_router
+
+        try:
+            app.state.coding = CodingService(_Path(repo))
+            app.include_router(build_coding_router(app.state.coding))
+            log.info("coding surface mounted", repo=str(_Path(repo).resolve()))
+        except Exception as exc:
+            log.warning("coding surface unavailable", error=str(exc))
 
     def _reject_if_draining() -> None:
         if app.state.draining:
@@ -331,6 +355,17 @@ def create_app(
         not widen what an anonymous caller can read.
         """
         return HTMLResponse(DASHBOARD_HTML)
+
+    @app.get("/code", include_in_schema=False)
+    async def workbench() -> HTMLResponse:
+        """The coding workbench: files, diffs, and the agent, in one page."""
+        if app.state.coding is None:
+            return HTMLResponse(
+                "<h1>No repository</h1><p>Start the server from inside a git "
+                "repository, or run <code>forge ui</code> there.</p>",
+                status_code=404,
+            )
+        return HTMLResponse(WORKBENCH_HTML)
 
     # -- operations --------------------------------------------------------
 

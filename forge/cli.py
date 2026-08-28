@@ -626,6 +626,24 @@ def ui(
     _echo("            paste it into the field at the top right, once")
     _echo("")
 
+    # Serve the workbench when this is a repository root, and open straight
+    # into it: someone running `forge ui` inside their code wants the editor,
+    # not a list of runs.
+    from forge.coding.git import GitRepo
+
+    repo = Path.cwd()
+    is_repo_root = False
+    with contextlib.suppress(Exception):
+        is_repo_root = GitRepo(repo).is_repo_root
+
+    if is_repo_root:
+        _echo("  workbench opens on this repository; /  for the run console")
+        os.environ["FORGE_REPO"] = str(repo)
+        url += "/code"
+    else:
+        _echo("  not a git repository root - the run console only")
+    _echo("")
+
     if open_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
 

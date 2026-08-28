@@ -177,3 +177,52 @@ def test_an_unfinished_run_lists_as_running(tmp_path) -> None:
     rows = {r["run_id"]: r["status"] for r in drive(scenario())}
     assert rows["run_open"] == "RUNNING"
     assert rows["run_shut"] == "FAILED"
+
+
+# -- the workbench ---------------------------------------------------------
+
+
+def test_the_workbench_is_absent_without_a_repository(tmp_path) -> None:
+    """A deployment serving generic runs gets no endpoints that read or write
+    a working tree. That is the right default, not a setting to remember."""
+    with _client(tmp_path) as client:
+        assert client.get("/code").status_code == 404
+        assert client.get("/code/tree").status_code == 404
+
+
+def test_the_workbench_is_served_when_a_repository_is_mounted(tmp_path) -> None:
+    import subprocess
+
+    from forge.api.app import create_app
+    from forge.deployment import Forge
+    from forge.llm.mock import MockProvider
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    for args in (
+        ["init", "-q", "-b", "master"], ["config", "user.email", "t@t.t"],
+        ["config", "user.name", "t"], ["add", "-A"], ["commit", "-qm", "init"],
+    ):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+    deployment = Forge(config=_config(tmp_path), providers=[MockProvider(SCRIPT)])
+    app = create_app(
+        _config(tmp_path), deployment=deployment, configure_logs=False,
+        require_auth=False, repo=str(root),
+    )
+    with TestClient(app) as client:
+        page = client.get("/code")
+        assert page.status_code == 200
+        assert "FORGE workbench" in page.text
+
+        tree = client.get("/code/tree").json()
+        assert "a.py" in tree["files"]
+        assert client.get("/code/status").json()["branch"] == "master"
+
+
+def test_the_workbench_loads_nothing_from_the_network() -> None:
+    from forge.api.workbench import WORKBENCH_HTML
+
+    external = re.findall(r'(?:src|href)\s*=\s*["\'](https?:)?//[^"\']+', WORKBENCH_HTML)
+    assert external == [], f"workbench references external resources: {external}"
