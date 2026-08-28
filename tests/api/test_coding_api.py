@@ -386,3 +386,50 @@ def test_an_explicit_configuration_is_never_overridden(tmp_path, monkeypatch) ->
 
     service = CodingService(_repo(tmp_path))
     assert service.agent.config.providers[0].kind == "openai"
+
+
+# -- stop, review your own work, read the trail ----------------------------
+
+
+def test_your_own_uncommitted_changes_are_readable(tmp_path) -> None:
+    """Studio lets you edit a file, so it has to let you read that edit. An
+    editor built around reviewing diffs that will not show your own is
+    incoherent."""
+    service = CodingService(_repo(tmp_path))
+    assert service.working_changes()["clean"] is True
+
+    (service.repo / "src" / "calc.py").write_text("changed\n", encoding="utf-8")
+    changes = service.working_changes()
+
+    assert changes["clean"] is False
+    assert "src/calc.py" in changes["files"]
+    assert "changed" in changes["diff"]
+
+
+def test_the_runtime_state_is_not_reported_as_your_change(tmp_path) -> None:
+    """`.forge/` lives in the repository. Reporting it as something the user
+    modified is noise in the one view that must be trustworthy."""
+    service = CodingService(_repo(tmp_path))
+    (service.repo / ".forge").mkdir(exist_ok=True)
+    (service.repo / ".forge" / "forge.db").write_bytes(b"x")
+
+    assert service.working_changes()["clean"] is True
+
+
+def test_cancelling_a_task_that_is_not_running_is_refused(tmp_path) -> None:
+    service = CodingService(_repo(tmp_path))
+    task = _branch_with_change(service, "forge/code_z")
+
+    with pytest.raises(HTTPException) as caught:
+        service.cancel(task.id)
+    assert caught.value.status_code == 409
+
+
+def test_a_task_with_no_run_has_an_empty_trail(tmp_path) -> None:
+    """A task that never reached the runtime has nothing to show, and must say
+    so rather than raising."""
+    import asyncio
+
+    service = CodingService(_repo(tmp_path))
+    task = _branch_with_change(service, "forge/code_y")
+    assert asyncio.run(service.audit(task.id)) == []

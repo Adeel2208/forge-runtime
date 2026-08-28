@@ -128,6 +128,12 @@ class CodingService:
         self.repo = Path(repo).resolve()
         self.agent = CodingAgent(self.repo, config=_default_config(Path(repo)))
         self.agent.repo.require_repo()
+        # The runtime's own state lives in the repository, so without this it
+        # shows up as the user's uncommitted change the first time Studio is
+        # asked what they have modified. A task start does this too, but Studio
+        # can be asked before any task has run.
+        with contextlib.suppress(GitError):
+            self.agent.repo.exclude_runtime_state()
         self.tasks: dict[str, Task] = {}
         self.order: list[str] = []
         self._running: asyncio.Task[None] | None = None
@@ -378,8 +384,31 @@ class CodingService:
                 task.error = result.run.error
         except (NotARepository, GitError) as exc:
             task.status, task.error = "failed", str(exc)
+        except asyncio.CancelledError:
+            # Stopped on purpose. Whatever the agent committed before the stop
+            # is still on its branch, which is the point of the branch - so
+            # this is a state you can read and discard, not work that vanished.
+            task.status = "cancelled"
+            task.error = "stopped before it finished"
+            self._note(task, "warn", "stopped")
+            raise
         except Exception as exc:
             task.status, task.error = "failed", f"{type(exc).__name__}: {exc}"
+
+    def cancel(self, task_id: str) -> dict[str, Any]:
+        """Stop a running task.
+
+        Only one task runs at a time, deliberately - two agents branching from
+        one working tree would interleave commits. That makes an unstoppable
+        task a blocked application, so stopping has to be possible. Partial
+        work stays on the branch and is discarded the same way any other task
+        is.
+        """
+        task = self.get(task_id)
+        if task.status != "running" or self._running is None:
+            raise HTTPException(status_code=409, detail="that task is not running")
+        self._running.cancel()
+        return {"cancelled": task.id}
 
     def get(self, task_id: str) -> Task:
         task = self.tasks.get(task_id)
@@ -426,6 +455,25 @@ class CodingService:
             and not self.tasks[i].merged
         ]
 
+    def working_changes(self) -> dict[str, Any]:
+        """What *you* have changed and not committed.
+
+        Studio lets you edit a file, so it has to let you read that edit. An
+        editor built around reviewing diffs that will not show your own is
+        incoherent - and the uncommitted state is also what the agent will
+        branch from, so it is worth seeing before starting a task.
+        """
+        diff = ""
+        files: list[str] = []
+        with contextlib.suppress(GitError):
+            diff = self.agent.repo.run("diff")
+            files = [
+                line[3:].strip()
+                for line in self.agent.repo.run("status", "--porcelain").splitlines()
+                if line.strip()
+            ]
+        return {"diff": diff, "files": files, "clean": not files}
+
     def file_diff(self, task_id: str, path: str) -> str:
         """One file's diff. The whole-task diff is unreadable past a few files,
         and reading the change is the step this product exists to make easy."""
@@ -436,6 +484,41 @@ class CodingService:
         with contextlib.suppress(GitError):
             return self.agent.repo.run("diff", f"{base}...{task.branch}", "--", path)
         return ""
+
+    async def audit(self, task_id: str) -> list[dict[str, Any]]:
+        """The durable event log for this task's run.
+
+        Every claim this project makes - authorized, recorded, recoverable -
+        is a claim about this log. It was reachable through the run console and
+        `forge trace`, but not from the place where the work is actually being
+        judged, which is the one place it matters most.
+        """
+        task = self.get(task_id)
+        if not task.run_id:
+            return []
+        from forge.config import ForgeConfig
+        from forge.state.sqlite_store import SQLiteEventStore
+
+        store = SQLiteEventStore(ForgeConfig.load().sqlite_path)
+        await store.open()
+        try:
+            events = await store.read(task.run_id)
+        finally:
+            await store.close()
+        return [
+            {
+                "seq": e.seq,
+                "step": e.step_index,
+                "type": e.type.value,
+                "payload": {
+                    k: v
+                    for k, v in e.payload.items()
+                    if k in ("tool", "decision", "reason", "capability", "ok",
+                             "detail", "error", "phase", "action", "model")
+                },
+            }
+            for e in events
+        ]
 
     def accept(self, task_id: str) -> dict[str, Any]:
         task = self.get(task_id)
@@ -551,6 +634,18 @@ def build_coding_router(
     @router.get("/tasks/{task_id}/diff/file")
     async def task_file_diff(task_id: str, path: str = Query(min_length=1)) -> dict[str, Any]:
         return {"diff": service.file_diff(task_id, path)}
+
+    @router.post("/tasks/{task_id}/cancel")
+    async def cancel(task_id: str) -> dict[str, Any]:
+        return service.cancel(task_id)
+
+    @router.get("/tasks/{task_id}/audit")
+    async def audit(task_id: str) -> list[dict[str, Any]]:
+        return await service.audit(task_id)
+
+    @router.get("/changes")
+    async def working_changes() -> dict[str, Any]:
+        return service.working_changes()
 
     @router.post("/tasks/{task_id}/accept")
     async def accept(task_id: str) -> dict[str, Any]:

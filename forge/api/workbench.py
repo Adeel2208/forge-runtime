@@ -151,7 +151,7 @@ mark{background:var(--gold);color:#000}
   font-size:10.5px;color:var(--muted)}
 .st{font-size:9.5px;padding:1px 6px;border-radius:8px;border:1px solid currentColor}
 .st.running{color:var(--accent)}.st.completed{color:var(--ok)}.st.failed{color:var(--bad)}
-.st.merged{color:var(--ok)}.st.discarded{color:var(--muted)}
+.st.merged{color:var(--ok)}.st.discarded{color:var(--muted)}.st.cancelled{color:var(--warn)}
 .acts{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
 .files{display:flex;flex-direction:column;gap:2px;margin-top:6px}
 .stk{font-size:10.5px;color:var(--warn);margin-top:6px;line-height:1.4}
@@ -205,7 +205,7 @@ mark{background:var(--gold);color:#000}
     <b>FORGE Studio</b>
     <span id="repo" class="chip"></span>
     <span id="branch" class="chip"></span>
-    <span id="dirty" class="chip"></span>
+    <span id="dirty" class="chip" title="Your uncommitted changes"></span>
     <span class="grow"></span>
     <select class="x" id="model" title="Local model used by the agent"></select>
     <button class="x" id="install" style="display:none">Install app</button>
@@ -401,6 +401,45 @@ async function openFileDiff(taskId,file){
   }catch(e){toast(e.message,"bad")}
 }
 
+/* Your own uncommitted work. An editor built around reading diffs that will
+   not show yours is incoherent - and this is also what the agent branches
+   from, so it is worth seeing before starting a task. */
+async function openChanges(){
+  try{
+    const c=await api("/code/changes");
+    const body=c.clean
+      ? '<span class="dl">Working tree is clean.</span>'
+      : (c.diff.trim()?renderDiffText(c.diff)
+         :'<span class="dl">Untracked files:</span>'+
+          c.files.map(f=>'<span class="dl a">  '+esc(f)+"</span>").join(""));
+    tabs=tabs.filter(x=>x.id!=="wt");
+    openTab({id:"wt",kind:"diff",title:"your changes",html:body});
+  }catch(e){toast(e.message,"bad")}
+}
+
+/* The durable event log for one task. Every claim this project makes -
+   authorized, recorded, recoverable - is a claim about this log, and it was
+   not visible from the place where the work is judged. */
+const AUDIT_TONE={
+  POLICY_DECIDED:"a",PERMIT_ISSUED:"",ACTION_DISPATCHED:"h",EFFECT_OBSERVED:"a",
+  EFFECT_REUSED:"at",LOOP_DETECTED:"d",RUN_FAILED:"d",PROPOSAL_REJECTED:"d",
+  RUN_COMPLETED:"a",COMPENSATION_APPLIED:"d",
+};
+async function openAudit(taskId){
+  try{
+    const rows=await api("/code/tasks/"+taskId+"/audit");
+    const body=rows.length?rows.map(r=>{
+      const bits=Object.entries(r.payload).map(([k,v])=>k+"="+v).join(" ");
+      const cls=AUDIT_TONE[r.type]!==undefined?AUDIT_TONE[r.type]:"";
+      return '<span class="dl '+cls+'">'+
+        String(r.seq).padStart(4)+"  s"+(r.step??0)+"  "+
+        esc(r.type.padEnd(22))+" "+esc(bits)+"</span>";
+    }).join(""):'<span class="dl">No events recorded for this task.</span>';
+    tabs=tabs.filter(x=>x.id!=="au:"+taskId);
+    openTab({id:"au:"+taskId,kind:"diff",title:"audit \u00b7 "+taskId.slice(-6),html:body});
+  }catch(e){toast(e.message,"bad")}
+}
+
 async function loadModels(){
   const sel=$("model");
   try{
@@ -492,10 +531,14 @@ function drawTasks(){
         task instead - it already contains this work.</div>`:""}
       ${t.stacked_on?`<div class="stk">Built on the task below.</div>`:""}
       ${prog.length?`<div class="prog">${prog.map(p=>`<div class="pl ${esc(p.kind)}">${esc(p.text)}</div>`).join("")}</div>`:""}
-      ${act?`<div class="acts">
-        <button data-a="diff" data-id="${t.id}">Review diff</button>
-        <button data-a="merge" data-id="${t.id}" class="go">Merge</button>
-        <button data-a="undo" data-id="${t.id}" class="bad">Discard</button></div>`:""}
+      ${t.status==="running"?`<div class="acts">
+        <button data-a="stop" data-id="${t.id}" class="bad">Stop</button></div>`:""}
+      ${t.status!=="running"&&t.run_id?`<div class="acts">
+        ${t.commits?`<button data-a="diff" data-id="${t.id}">Review diff</button>`:""}
+        <button data-a="audit" data-id="${t.id}">Audit trail</button>
+        ${act?`<button data-a="merge" data-id="${t.id}" class="go">Merge</button>
+        <button data-a="undo" data-id="${t.id}" class="bad">Discard</button>`:""}
+      </div>`:""}
     </div>`}).join("");
   $("tasks").querySelectorAll(".tk").forEach(n=>n.onclick=e=>{
     if(e.target.dataset.a||e.target.dataset.f)return;openDiff(n.dataset.id)});
@@ -504,6 +547,13 @@ function drawTasks(){
   $("tasks").querySelectorAll("button[data-a]").forEach(b=>b.onclick=async e=>{
     e.stopPropagation();const id=b.dataset.id,a=b.dataset.a;
     if(a==="diff")return openDiff(id);
+    if(a==="audit")return openAudit(id);
+    if(a==="stop"){
+      b.disabled=true;
+      try{await api("/code/tasks/"+id+"/cancel",{method:"POST"});toast("Stopping...");await refresh();}
+      catch(err){toast(err.message,"bad");b.disabled=false}
+      return;
+    }
     if(a==="undo"&&!confirm("Discard this task's branch? The work is lost."))return;
     b.disabled=true;
     try{const r=await api("/code/tasks/"+id+"/"+(a==="merge"?"accept":"undo"),{method:"POST"});
@@ -517,6 +567,8 @@ async function refresh(){
     $("repo").textContent=status.name;$("repo").className="chip on";
     $("branch").textContent=status.branch;
     $("dirty").textContent=status.clean?"clean":status.dirty_files.length+" changed";
+    $("dirty").className="chip"+(status.clean?"":" on");
+    $("dirty").style.cursor=status.clean?"default":"pointer";
     $("b-branch").textContent="⎇ "+status.branch;
     $("b-model").textContent=status.model;$("b-policy").textContent=status.policy;
     $("send").disabled=!!status.busy;
@@ -539,6 +591,11 @@ const COMMANDS=[
   {n:"Close tab",k:"Ctrl+W",run:()=>active&&closeTab(active)},
   {n:"Give the agent a task",k:"Ctrl+Enter",run:()=>$("goal").focus()},
   {n:"Review latest diff",run:()=>tasks[0]&&openDiff(tasks[0].id)},
+  {n:"Show my uncommitted changes",run:openChanges},
+  {n:"Show the latest task's audit trail",run:()=>tasks[0]&&openAudit(tasks[0].id)},
+  {n:"Stop the running task",run:()=>{const r=tasks.find(x=>x.status==="running");
+     if(r)api("/code/tasks/"+r.id+"/cancel",{method:"POST"}).then(refresh);
+     else toast("Nothing is running")}},
   {n:"Refresh",k:"Ctrl+R",run:refresh},
   {n:"Open run console",run:()=>location.href="/"},
 ];
