@@ -1,0 +1,155 @@
+name: release
+
+# Tag-driven. `git tag v0.7.0 && git push --tags` builds the wheel, publishes
+# it, and attaches a desktop installer for each platform to the GitHub release.
+#
+# Nothing here runs on a push to main: a release is a deliberate act, and a
+# pipeline that publishes on every merge is one bad merge away from a version
+# nobody meant to ship.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # The tag must match the version in pyproject, or the release is named one
+  # thing and installs as another - which is discovered by a user, not by us.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -e ".[dev,api]"
+
+      - name: The tag agrees with the package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib, pathlib
+          tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          version = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text()
+          )["project"]["version"]
+          if tag != version:
+              sys.exit(f"tag {tag!r} does not match pyproject version {version!r}")
+          print(f"releasing {version}")
+          PY
+
+      - name: The suite passes
+        run: pytest -q
+
+      - name: Types and lint
+        run: |
+          mypy forge
+          ruff check forge tests scripts
+
+  wheel:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Build
+        run: |
+          pip install build twine
+          python -m build
+
+      - name: The artifact is well formed
+        # `twine check` is what catches a README that renders as raw text on
+        # PyPI, which cannot be fixed after upload - a version is immutable.
+        run: twine check dist/*
+
+      - name: Install it clean and smoke-test
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --quiet "$(ls dist/*.whl)[api]"
+          /tmp/clean/bin/forge --help > /dev/null
+          /tmp/clean/bin/python -c "
+          import pathlib, forge
+          root = pathlib.Path(forge.__file__).parent
+          assert (root / 'py.typed').exists()
+          assert (root / 'security/policies/default.yaml').exists()
+          assert (root / 'api/workbench.py').exists()
+          print('wheel ok:', forge.__version__)
+          "
+
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist/ }
+
+  publish:
+    needs: wheel
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # trusted publishing: no API token in a secret
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # electron-builder only targets the platform it runs on, so one runner each.
+  installers:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+
+      - name: Build the installer
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --publish never
+
+      # Unsigned, and the release notes say so. Signing needs a certificate
+      # that cannot live in this repository.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+          if-no-files-found: warn
+
+  release:
+    needs: [wheel, installers]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+
+      - name: Publish the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            ```bash
+            pip install "forge-runtime[api]"
+            cd your-project && forge studio
+            ```
+
+            Requires Python 3.11+, git, and [Ollama](https://ollama.com) with a
+            model pulled (`ollama pull qwen3:8b`).
+
+            ## Desktop installers
+
+            Attached below. **They are not code-signed**: Windows SmartScreen
+            will warn, and macOS will refuse to open one without
+            notarisation. `pip install` plus `forge studio` avoids both.

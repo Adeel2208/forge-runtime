@@ -7,11 +7,25 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Windows is in the matrix because this repository has been bitten twice by
+    # platform asymmetry: type-ignores required on one platform are errors on
+    # the other, and the Windows sandbox path - Job Objects with
+    # KILL_ON_JOB_CLOSE, the mechanism that guarantees a killed run leaves no
+    # orphaned processes - had never once executed in CI while Windows was the
+    # primary development platform.
+    #
+    # One Windows entry rather than three: it covers the platform-specific code
+    # without tripling the matrix for interpreter differences Linux already
+    # exercises.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +96,46 @@ jobs:
         with:
           name: evaluation-records
           path: reports/
+
+  desktop:
+    # The Electron shell and the pages it serves are JavaScript, and the pages
+    # live inside Python strings where a dropped backslash becomes a real
+    # newline - which imports fine, serves fine, and renders a blank window.
+    # Nothing in the Python suite notices, because the API is unaffected.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+
+      - name: Install
+        run: pip install -e ".[dev,api]"
+
+      - name: The shell parses
+        run: node --check desktop/main.js
+
+      - name: The served pages parse
+        # These skip when node is absent, so they must run somewhere it is not.
+        run: pytest tests/api/test_page_syntax.py tests/api/test_ui_coverage.py -q
+
+      - name: The build is configured correctly
+        working-directory: desktop
+        run: |
+          npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
+          # Packaging a file that does not exist is a lie that only shows up in
+          # the installer, so check the manifest against the tree.
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const missing = pkg.build.files.filter(f => !f.includes('*') && !fs.existsSync(f));
+            if (missing.length) { console.error('listed but absent:', missing); process.exit(1); }
+            for (const field of ['author', 'version', 'build']) {
+              if (!pkg[field]) { console.error('package.json has no', field); process.exit(1); }
+            }
+            console.log('packaging manifest is consistent with the tree');
+          "
 
   package:
     runs-on: ubuntu-latest

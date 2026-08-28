@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How something works
+    url: https://github.com/Adeel2208/forge-runtime/tree/main/docs/adr
+    about: The architecture decisions, with the alternatives that were rejected.

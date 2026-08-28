@@ -1,0 +1,40 @@
+name: Bug report
+description: Something behaved differently from what it claimed.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the agent did something surprising, the event log usually says why.
+        `forge trace <run_id>` prints it, or open the task's Audit trail in Studio.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      placeholder: |
+        1. forge init
+        2. forge run "..."
+        3. ...
+    validations: { required: true }
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `forge doctor`
+      description: It reports the config that would actually run, which is usually the answer.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "forge-runtime 0.6.0, Python 3.12, Windows 11"
+    validations: { required: true }
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: "ollama/qwen3:8b"
