@@ -61,6 +61,29 @@ def _branch_with_change(service: CodingService, name: str) -> Task:
     return task
 
 
+
+def _start(service: CodingService, goal: str) -> Task:
+    """Start a task, then cancel the run immediately.
+
+    `start()` is what computes the stack, and it needs a running loop to
+    schedule the work. The work itself needs a model, which these tests
+    deliberately do not have - so the run is cancelled the moment it is
+    scheduled and only the bookkeeping is exercised.
+    """
+    import asyncio
+    import contextlib as ctx
+
+    async def go() -> Task:
+        task = service.start(goal, None)
+        if service._running is not None:
+            service._running.cancel()
+            with ctx.suppress(BaseException):
+                await service._running
+        return task
+
+    return asyncio.run(go())
+
+
 # -- the diff --------------------------------------------------------------
 
 
@@ -292,3 +315,46 @@ def test_every_coding_endpoint_requires_a_key(tmp_path) -> None:
 
         # The page itself stays open: it carries no repository data.
         assert client.get("/code").status_code == 200
+
+
+# -- stacked tasks ---------------------------------------------------------
+
+
+def test_a_task_started_from_a_previous_branch_records_the_stack(tmp_path) -> None:
+    """A run branches from wherever HEAD is, and a finished run leaves HEAD on
+    its own branch - so iterating stacks tasks. That is the right behaviour;
+    it just has to be visible."""
+    service = CodingService(_repo(tmp_path))
+    first = _branch_with_change(service, "forge/code_a")
+
+    # HEAD is on the first task's branch, exactly as a finished run leaves it.
+    assert service.agent.repo.current_branch() == "forge/code_a"
+    second = _start(service, "follow-up")
+
+    assert second.stacked_on == first.id
+    assert service.stacked_above(first.id) == [second.id]
+
+
+def test_merging_an_earlier_task_alone_is_refused(tmp_path) -> None:
+    """Merging it would leave the later task's work stranded on a branch
+    whose base has moved, and merging the newest already includes this one."""
+    service = CodingService(_repo(tmp_path))
+    first = _branch_with_change(service, "forge/code_b")
+    second = _start(service, "follow-up")
+    second.status, second.commits, second.branch = "completed", 1, "forge/code_c"
+
+    with pytest.raises(HTTPException) as caught:
+        service.accept(first.id)
+    assert caught.value.status_code == 409
+    assert "newest" in str(caught.value.detail)
+
+
+def test_a_discarded_follow_up_stops_blocking_the_earlier_task(tmp_path) -> None:
+    service = CodingService(_repo(tmp_path))
+    first = _branch_with_change(service, "forge/code_d")
+    second = _start(service, "follow-up")
+    second.status, second.commits, second.branch = "completed", 1, "forge/code_e"
+
+    service.undo(second.id)
+    assert service.stacked_above(first.id) == []
+    assert service.accept(first.id)["into"] == "master"

@@ -74,6 +74,10 @@ class Task:
     files: list[str] = field(default_factory=list)
     diff_stat: str = ""
     base_ref: str = ""
+    stacked_on: str | None = None
+    """The task this one was built on top of, when it started from that
+    task's branch rather than from the base branch."""
+
     progress: list[dict[str, Any]] = field(default_factory=list)
     """Live trace of the run, for the app to render while it works."""
 
@@ -87,6 +91,7 @@ class Task:
             "run_id": self.run_id, "branch": self.branch, "commits": self.commits,
             "files": self.files, "diff_stat": self.diff_stat, "error": self.error,
             "base_ref": self.base_ref, "progress": self.progress,
+            "stacked_on": self.stacked_on,
             "merged": self.merged, "discarded": self.discarded,
         }
 
@@ -283,6 +288,19 @@ class CodingService:
                 detail="a task is already running; wait for it to finish",
             )
         task = Task(id=new_id("task"), goal=goal)
+        # A run branches from wherever HEAD is. After a previous task that is
+        # the previous task's branch, so this one stacks on it - which is what
+        # makes iterating work, and what the panel has to say out loud.
+        with contextlib.suppress(GitError):
+            head = self.agent.repo.current_branch()
+            task.stacked_on = next(
+                (
+                    other.id
+                    for other in reversed([self.tasks[i] for i in self.order])
+                    if other.branch == head and not other.merged and not other.discarded
+                ),
+                None,
+            )
         self.tasks[task.id] = task
         self.order.append(task.id)
         self._running = asyncio.create_task(self._execute(task, max_steps))
@@ -303,8 +321,15 @@ class CodingService:
             name = getattr(event_type, "value", str(event_type))
             tool = payload.get("tool")
             if name == "STEP_COMMITTED":
-                self._note(task, "ok", f"step {payload.get('index', '')} "
-                                       f"ran {tool or 'a tool'}".strip())
+                step = payload.get("index", "")
+                if payload.get("ok"):
+                    self._note(task, "ok", f"step {step} ran {tool or 'a tool'}".strip())
+                else:
+                    detail = str(payload.get("detail", ""))[:110]
+                    self._note(
+                        task, "bad",
+                        f"step {step} {tool or 'a tool'} failed: {detail}".strip(),
+                    )
             elif name == "PROPOSAL_RECEIVED" and tool:
                 self._note(task, "plan", f"proposes {tool}")
             elif name == "EFFECT_OBSERVED" and tool:
@@ -372,6 +397,16 @@ class CodingService:
             return self.agent.repo.run("diff", f"{base}...{task.branch}")
         return ""
 
+    def stacked_above(self, task_id: str) -> list[str]:
+        """Live tasks built on top of this one, newest last."""
+        return [
+            self.tasks[i].id
+            for i in self.order
+            if self.tasks[i].stacked_on == task_id
+            and not self.tasks[i].discarded
+            and not self.tasks[i].merged
+        ]
+
     def file_diff(self, task_id: str, path: str) -> str:
         """One file's diff. The whole-task diff is unreadable past a few files,
         and reading the change is the step this product exists to make easy."""
@@ -389,6 +424,16 @@ class CodingService:
             raise HTTPException(status_code=400, detail="this task changed nothing to merge")
         if task.discarded:
             raise HTTPException(status_code=400, detail="this task was already discarded")
+        later = self.stacked_above(task_id)
+        if later:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "a later task was built on this one; merging this alone would "
+                    "leave that work stranded. Merge the newest task instead - it "
+                    "already contains this one."
+                ),
+            )
         try:
             # A run leaves HEAD on the agent's branch. Merging from there
             # merges a branch into itself: git reports success, the base
@@ -465,7 +510,12 @@ def build_coding_router(
 
     @router.get("/tasks")
     async def list_tasks() -> list[dict[str, Any]]:
-        return [service.tasks[t].to_dict() for t in reversed(service.order)]
+        out = []
+        for tid in reversed(service.order):
+            row = service.tasks[tid].to_dict()
+            row["stacked_above"] = service.stacked_above(tid)
+            out.append(row)
+        return out
 
     @router.post("/tasks", status_code=202)
     async def start_task(body: TaskRequest) -> dict[str, Any]:

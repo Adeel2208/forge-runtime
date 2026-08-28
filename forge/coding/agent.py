@@ -372,17 +372,29 @@ def _attach_progress(
     after_commit = runtime._checkpoint
 
     async def checkpoint_and_report(run_id: str, state: Any) -> None:
-        before = len(state.observations)
+        seen = len(state.observations)
+        failed = len(state.failures)
         await after_commit(run_id, state)
-        if state.observations:
+
+        # A step that failed adds no observation, so reporting the last one
+        # regardless announced the *previous* tool as having just succeeded -
+        # a failed edit displayed as "ran edit_file", which is the opposite of
+        # what happened and exactly when the user most needs the truth.
+        if len(state.observations) > seen:
             last = state.observations[-1]
             on_step(
                 EventType.STEP_COMMITTED,
+                {"tool": last.get("tool"), "index": state.step_index, "ok": True},
+            )
+        elif len(state.failures) > failed:
+            problem = state.failures[-1]
+            on_step(
+                EventType.STEP_COMMITTED,
                 {
-                    "tool": last.get("tool"),
+                    "tool": problem.get("tool"),
                     "index": state.step_index,
-                    "ok": True,
-                    "new": len(state.observations) != before,
+                    "ok": False,
+                    "detail": str(problem.get("detail", ""))[:160],
                 },
             )
 

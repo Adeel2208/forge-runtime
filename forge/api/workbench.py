@@ -154,6 +154,7 @@ mark{background:var(--gold);color:#000}
 .st.merged{color:var(--ok)}.st.discarded{color:var(--muted)}
 .acts{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
 .files{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.stk{font-size:10.5px;color:var(--warn);margin-top:6px;line-height:1.4}
 .chg{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--gold);
   cursor:pointer;padding:1px 4px;border-radius:3px}
 .chg:hover{background:var(--wash);color:var(--accent)}
@@ -475,7 +476,8 @@ function drawTasks(){
   if(!tasks.length){$("tasks").innerHTML='<div class="empty">No tasks yet.<br>Describe a change below.</div>';return}
   $("tasks").innerHTML=tasks.map(t=>{
     const state=t.merged?"merged":t.discarded?"discarded":t.status;
-    const act=t.status==="completed"&&t.commits>0&&!t.merged&&!t.discarded;
+    const stacked=(t.stacked_above||[]).length>0;
+    const act=t.status==="completed"&&t.commits>0&&!t.merged&&!t.discarded&&!stacked;
     const prog=(t.progress||[]).slice(-14);
     return `<div class="tk ${current&&current.id===t.id?"on":""}" data-id="${t.id}">
       <div class="g">${esc(t.goal)}</div>
@@ -486,6 +488,9 @@ function drawTasks(){
         `<span class="chg" data-t="${t.id}" data-f="${esc(f)}" title="Show what changed in this file">${esc(f)}</span>`
       ).join("")}</div>` : ""}
       ${t.error?`<div class="m err">${esc(t.error)}</div>`:""}
+      ${stacked?`<div class="stk">A later task builds on this one. Merge the newest
+        task instead - it already contains this work.</div>`:""}
+      ${t.stacked_on?`<div class="stk">Built on the task below.</div>`:""}
       ${prog.length?`<div class="prog">${prog.map(p=>`<div class="pl ${esc(p.kind)}">${esc(p.text)}</div>`).join("")}</div>`:""}
       ${act?`<div class="acts">
         <button data-a="diff" data-id="${t.id}">Review diff</button>
