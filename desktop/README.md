@@ -40,9 +40,18 @@ npm run dist:dir    # unpacked, for a quick look
 ```
 
 Produces `.exe` (NSIS) on Windows, `.dmg` on macOS, `AppImage` and `.deb` on
-Linux, into `desktop/dist/`. electron-builder only builds for the platform it
-runs on unless you set up cross-compilation, so releases need one runner per
-platform.
+Linux, into `desktop/dist/`. Verified on Windows: `FORGE Studio Setup 0.6.0.exe`,
+about 82 MB, from a 269 MB unpacked tree.
+
+Two things about that output are worth knowing before you hand it to anyone.
+
+**It is not code-signed.** electron-builder says so and continues. Windows
+SmartScreen will warn on first run and macOS will refuse outright without
+notarisation. Signing needs a purchased certificate; nothing in this repository
+can conjure one.
+
+**electron-builder only builds for the platform it runs on**, absent
+cross-compilation, so a real release needs one CI runner per operating system.
 
 Neither `node_modules/` nor `dist/` is committed: the Electron toolchain is a
 build dependency of this directory, not source of the project.

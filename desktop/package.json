@@ -18,16 +18,46 @@
   "build": {
     "appId": "dev.forge.studio",
     "productName": "FORGE Studio",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "preload.js", "boot.html", "icon.png", "package.json"],
-    "win": { "target": ["nsis"], "icon": "icon.png" },
-    "mac": { "target": ["dmg"], "icon": "icon.png", "category": "public.app-category.developer-tools" },
-    "linux": { "target": ["AppImage", "deb"], "icon": "icon.png", "category": "Development" },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "boot.html",
+      "icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "icon.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "icon.png",
+      "category": "Development"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
-  }
+  },
+  "author": {
+    "name": "FORGE",
+    "email": "noreply@forge.dev"
+  },
+  "homepage": "https://github.com/Adeel2208/forge-runtime"
 }

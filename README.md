@@ -71,10 +71,29 @@ the next command.
 > **On PyPI:** not yet published, hence the `git+https` line above. Once it is,
 > that becomes `pip install "forge-runtime[api]"`.
 
-> **On local models:** the runtime is model-agnostic, but a local model has to
-> be able to follow a tool-calling loop and stop when it is done. Measured on a
-> two-step task, `qwen3:8b`, `qwen3.5` and `qwen3:1.7b` complete it correctly;
-> `llama3.2:1b` and `granite3.3:2b` do not. Start with an 8B-class model.
+### Which local models actually work
+
+The runtime is model-agnostic, but a coding model has to follow a tool-calling
+loop, edit a file, and stop. Measured through the same path Studio uses — one
+task per model, a fresh repository each time, scored by reading the file on the
+branch afterwards rather than by trusting the exit status:
+
+| model | | steps | time | result |
+|---|---|---|---|---|
+| `qwen3:8b` | 8.2B | 2 | 33s | ✅ correct |
+| `granite3.3:2b` | 2.5B | 1 | 16s | ✅ correct |
+| `qwen3.5:latest` | 9.7B | 2 | 229s | ✅ correct |
+| `qwen3:1.7b` | 2.0B | 3 | 20s | ❌ repeated a mutating action |
+| `llama3.2:1b` | 1.2B | 5 | 20s | ❌ five steps, no progress |
+
+`qwen3:8b` is the sensible default: correct and quick. `granite3.3:2b`
+succeeding in one step at 2.5B is the more interesting result — capability here
+is not simply a function of size. `qwen3.5` is correct but seven times slower
+than `qwen3:8b` for the same change.
+
+One task, one trial per model: directional, not a benchmark. Raw output is in
+[`reports/model-coding.json`](reports/model-coding.json), and Studio's model
+picker lists whatever `ollama` has pulled, so trying another is a dropdown.
 
 ---
 

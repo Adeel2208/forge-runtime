@@ -1,0 +1,52 @@
+[
+  {
+    "model": "qwen3:8b",
+    "status": "completed",
+    "commits": 1,
+    "correct": true,
+    "steps": 2,
+    "seconds": 33,
+    "note": "",
+    "kept_add": true
+  },
+  {
+    "model": "qwen3.5:latest",
+    "status": "completed",
+    "commits": 1,
+    "correct": true,
+    "steps": 2,
+    "seconds": 229,
+    "note": "",
+    "kept_add": true
+  },
+  {
+    "model": "qwen3:1.7b",
+    "status": "failed",
+    "commits": 0,
+    "correct": false,
+    "steps": 3,
+    "seconds": 20,
+    "note": "bbfae92f63e13f14 repeated 2x (mutating) (kind='identical_act",
+    "kept_add": true
+  },
+  {
+    "model": "granite3.3:2b",
+    "status": "completed",
+    "commits": 1,
+    "correct": true,
+    "steps": 1,
+    "seconds": 16,
+    "note": "",
+    "kept_add": true
+  },
+  {
+    "model": "llama3.2:1b",
+    "status": "failed",
+    "commits": 0,
+    "correct": false,
+    "steps": 5,
+    "seconds": 20,
+    "note": "5 steps produced no new observation (kind='no_progress')",
+    "kept_add": true
+  }
+]
