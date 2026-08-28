@@ -497,3 +497,24 @@ def test_a_bounded_diff_does_not_blow_the_context(repo) -> None:
         step_id="s", state=RunState(goal="x"), tool_schemas=[]
     )
     assert "[diff truncated]" in view.messages[0]["content"]
+
+
+def test_a_session_refuses_a_subdirectory_before_opening_the_prompt(tmp_path) -> None:
+    """The guard was correct but late.
+
+    `require_repo()` lived in `Workspace.start()`, which runs on the first
+    task, so the banner reported a branch as though all was well and the
+    refusal arrived only after the user had typed a request and waited for a
+    model. An error that can be shown before someone invests effort should be.
+    """
+    import asyncio
+    import subprocess
+
+    from forge.coding.session import Session
+
+    root = tmp_path / "repo"
+    (root / "nested").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+
+    opened = asyncio.run(Session(repo=root / "nested").start())
+    assert opened is False, "a subdirectory of a repo must be refused at startup"

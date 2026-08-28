@@ -96,6 +96,13 @@ class Session:
                 self.repo, allow_dirty=self.allow_dirty,
                 approval=self._ask_approval, sandbox=self.sandbox,
             )
+            # Check the repository *before* opening the prompt. The guard has
+            # always been correct, but it lived in `Workspace.start()`, which
+            # runs on the first task - so the banner reported a branch as
+            # though all was well and the refusal arrived only after someone
+            # had typed a whole request and waited for a model. An error the
+            # user can be shown before they invest effort should be.
+            self.agent.repo.require_repo()
         except (NotARepository, GitError, ForgeError) as exc:
             print(f"\n  {error(str(exc))}\n")
             return False
