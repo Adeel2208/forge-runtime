@@ -144,7 +144,7 @@ def test_a_repeating_model_is_warned_before_it_is_killed(make_runtime) -> None:
     # The warning must reach the model as something it will actually read.
     rejections = [
         e for e in events
-        if e.type is EventType.PROPOSAL_REJECTED and "already used" in str(e.payload.get("error"))
+        if e.type is EventType.PROPOSAL_REJECTED and "already tried" in str(e.payload.get("error"))
     ]
     assert len(rejections) == 1
     assert "ANSWER" in str(rejections[0].payload["error"])

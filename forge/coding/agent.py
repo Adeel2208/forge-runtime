@@ -271,6 +271,33 @@ class _CodingCompiler(ContextCompiler):
             # Its own diff is the cheapest possible correction, and unlike a
             # prompt instruction the model cannot forget to consult it.
             sections.append(Section("work_so_far", 12, work))
+
+        # Replace the generic closing instruction. The base compiler asks
+        # whether the observations satisfy the goal - which for a coding task
+        # a model answers "yes" after merely *reading* the file, and the run
+        # then completes having changed nothing. Reading is never the work
+        # here, and the closing instruction is the last thing read before
+        # generating, so it is where that has to be said.
+        sections = [s for s in sections if s.key != "instruction"]
+        if work:
+            closing = (
+                "# NOW - DECIDE\n"
+                "The diff above is everything you have changed so far.\n"
+                "- If it fully satisfies the GOAL, reply "
+                '{"kind": "ANSWER", "answer": "<what you changed>"}.\n'
+                "- Otherwise call edit_file or write_file to make the next change.\n"
+                "Do not re-read a file you have already read, and do not repeat "
+                "an edit that already appears in the diff."
+            )
+        else:
+            closing = (
+                "# NOW - DECIDE\n"
+                "You have not changed anything yet, so the GOAL is not met.\n"
+                "Reading a file is not the work: call edit_file or write_file "
+                "to make the change the GOAL asks for.\n"
+                "Answer only once the change has actually been made."
+            )
+        sections.append(Section("instruction", 60, closing))
         return sections
 
     def _work_so_far(self) -> str:

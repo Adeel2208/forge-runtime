@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from forge.coding.agent import CodingAgent, CodingResult
 from forge.coding.git import GitError, NotARepository
+from forge.config import ProviderConfig
 from forge.ids import new_id
 
 __all__ = ["CodingService", "build_coding_router"]
@@ -49,6 +50,10 @@ class SaveRequest(BaseModel):
 
     path: str = Field(min_length=1)
     content: str
+
+
+class ModelRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
 
 
 class TaskRequest(BaseModel):
@@ -126,6 +131,81 @@ class CodingService:
             "policy": self.agent._policy.version,
             "busy": self.busy,
         }
+
+    async def models(self) -> dict[str, Any]:
+        """Which models this machine can actually run, and which is selected.
+
+        Asked of the Ollama daemon rather than read from configuration: the
+        point of the list is to show what is installed, and a config file
+        happily names a model that was never pulled. Each entry says whether it
+        is usable, so the picker can show a model that needs `ollama pull`
+        rather than silently omitting it.
+        """
+        from forge.llm.ollama import OllamaProvider
+
+        active = ""
+        providers = self.agent.config.providers
+        if providers:
+            active = providers[0].model
+
+        probe = OllamaProvider(model=active or "qwen3:8b")
+        installed: list[dict[str, Any]] = []
+        reachable = True
+        try:
+            client = await probe._http()
+            resp = await client.get("/api/tags", timeout=4.0)
+            resp.raise_for_status()
+            for entry in resp.json().get("models", []):
+                details = entry.get("details") or {}
+                installed.append(
+                    {
+                        "name": str(entry.get("name", "")),
+                        "size_gb": round(float(entry.get("size", 0)) / 1e9, 1),
+                        "parameters": details.get("parameter_size") or "",
+                        "family": details.get("family") or "",
+                    }
+                )
+        except Exception:
+            reachable = False
+        finally:
+            await probe.aclose()
+
+        # Embedding models cannot drive an agent loop; offering them as a
+        # choice would only produce a confusing failure later.
+        chat = [m for m in installed if "embed" not in m["name"].lower()]
+        chat.sort(key=lambda m: m["name"])
+        return {
+            "active": active,
+            "reachable": reachable,
+            "installed": chat,
+            "host": probe.host,
+        }
+
+    def use_model(self, name: str) -> dict[str, Any]:
+        """Switch the agent to another local model, for this session.
+
+        The agent is rebuilt rather than mutated: it caches a policy bundle and
+        a workspace, and reaching in to change one field of a frozen config
+        would leave those describing a model that is no longer in use.
+        `forge.toml` is deliberately not written - a picker is a thing you try,
+        and silently editing a project's configuration because someone looked
+        at a dropdown is not a trade worth making.
+        """
+        if self.busy:
+            raise HTTPException(
+                status_code=409, detail="a task is running; wait for it to finish"
+            )
+        if not name.strip():
+            raise HTTPException(status_code=400, detail="no model named")
+
+        config = self.agent.config
+        providers = config.providers or (ProviderConfig(kind="ollama"),)
+        head = replace(providers[0], kind="ollama", model=name)
+        self.agent = CodingAgent(
+            self.repo, config=replace(config, providers=(head, *providers[1:]))
+        )
+        self.agent.repo.require_repo()
+        return {"active": name}
 
     def tree(self) -> list[str]:
         """Tracked files, from git rather than a directory walk.
@@ -292,6 +372,17 @@ class CodingService:
             return self.agent.repo.run("diff", f"{base}...{task.branch}")
         return ""
 
+    def file_diff(self, task_id: str, path: str) -> str:
+        """One file's diff. The whole-task diff is unreadable past a few files,
+        and reading the change is the step this product exists to make easy."""
+        task = self.get(task_id)
+        if not task.branch:
+            return ""
+        base = task.base_ref or self._base_branch()
+        with contextlib.suppress(GitError):
+            return self.agent.repo.run("diff", f"{base}...{task.branch}", "--", path)
+        return ""
+
     def accept(self, task_id: str) -> dict[str, Any]:
         task = self.get(task_id)
         if not task.branch or task.commits == 0:
@@ -348,6 +439,14 @@ def build_coding_router(
     async def status() -> dict[str, Any]:
         return service.status()
 
+    @router.get("/models")
+    async def models() -> dict[str, Any]:
+        return await service.models()
+
+    @router.post("/models")
+    async def use_model(body: ModelRequest) -> dict[str, Any]:
+        return service.use_model(body.name)
+
     @router.get("/tree")
     async def tree() -> dict[str, Any]:
         return {"files": service.tree()}
@@ -379,6 +478,10 @@ def build_coding_router(
     @router.get("/tasks/{task_id}/diff")
     async def task_diff(task_id: str) -> dict[str, Any]:
         return {"diff": service.diff(task_id)}
+
+    @router.get("/tasks/{task_id}/diff/file")
+    async def task_file_diff(task_id: str, path: str = Query(min_length=1)) -> dict[str, Any]:
+        return {"diff": service.file_diff(task_id, path)}
 
     @router.post("/tasks/{task_id}/accept")
     async def accept(task_id: str) -> dict[str, Any]:

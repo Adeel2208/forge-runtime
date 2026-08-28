@@ -61,6 +61,10 @@ button:disabled{opacity:.4;cursor:not-allowed}
 button.go{background:var(--accent);border-color:var(--accent);color:#fff}
 button.go:hover:not(:disabled){opacity:.88;color:#fff}
 button.bad:hover:not(:disabled){border-color:var(--bad);color:var(--bad)}
+select{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:5px;
+  border:1px solid var(--line);background:var(--raise);color:var(--ink);max-width:190px}
+select:hover{border-color:var(--accent)}
+select:disabled{opacity:.5}
 input,textarea{font:inherit;padding:6px 9px;border-radius:5px;border:1px solid var(--line);
   background:var(--raise);color:var(--ink);width:100%}
 textarea{resize:none}
@@ -149,6 +153,10 @@ mark{background:var(--gold);color:#000}
 .st.running{color:var(--accent)}.st.completed{color:var(--ok)}.st.failed{color:var(--bad)}
 .st.merged{color:var(--ok)}.st.discarded{color:var(--muted)}
 .acts{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.files{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.chg{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--gold);
+  cursor:pointer;padding:1px 4px;border-radius:3px}
+.chg:hover{background:var(--wash);color:var(--accent)}
 .prog{margin-top:7px;border-top:1px solid var(--line);padding-top:6px;
   font-size:11px;max-height:150px;overflow-y:auto}
 .pl{padding:1px 0;color:var(--muted)}
@@ -198,6 +206,7 @@ mark{background:var(--gold);color:#000}
     <span id="branch" class="chip"></span>
     <span id="dirty" class="chip"></span>
     <span class="grow"></span>
+    <select class="x" id="model" title="Local model used by the agent"></select>
     <button class="x" id="install" style="display:none">Install app</button>
     <button class="x" id="cmd">⌘K Commands</button>
     <input class="x mono" id="key" type="password" placeholder="API key"
@@ -370,15 +379,61 @@ async function openFile(path){
     openTab({id,kind:"file",path,title:path.split("/").pop(),content:f.content,dirty:false});
   }catch(e){toast(e.message,"bad")}
 }
+function renderDiffText(d){
+  if(!d.trim())return '<span class="dl">No change in this file.</span>';
+  return d.split(/\\r?\\n/).map(l=>{
+    const c=l.startsWith("+++")||l.startsWith("---")||l.startsWith("diff ")||l.startsWith("index ")?"h":
+            l.startsWith("@@")?"at":l.startsWith("+")?"a":l.startsWith("-")?"d":"";
+    return '<span class="dl '+c+'">'+esc(l)+"</span>";}).join("");
+}
+
+/* One file at a time. A whole-task diff stops being readable past a few
+   files, and reading the change is the step this product exists to make easy. */
+async function openFileDiff(taskId,file){
+  current=tasks.find(t=>t.id===taskId)||current;
+  try{
+    const d=(await api("/code/tasks/"+taskId+"/diff/file?path="+encodeURIComponent(file))).diff;
+    const id="df:"+taskId+":"+file;
+    tabs=tabs.filter(x=>x.id!==id);
+    openTab({id,kind:"diff",title:"\u0394 "+file.split("/").pop(),html:renderDiffText(d)});
+    drawTasks();
+  }catch(e){toast(e.message,"bad")}
+}
+
+async function loadModels(){
+  const sel=$("model");
+  try{
+    const m=await api("/code/models");
+    if(!m.reachable){
+      sel.innerHTML='<option>ollama not running</option>';sel.disabled=true;
+      return;
+    }
+    sel.disabled=!!status.busy;
+    sel.innerHTML=m.installed.map(x=>
+      `<option value="${esc(x.name)}" ${x.name===m.active?"selected":""}>`+
+      `${esc(x.name)} \u00b7 ${x.size_gb}GB</option>`).join("")
+      ||'<option>no models pulled</option>';
+    if(m.active&&!m.installed.some(x=>x.name===m.active)){
+      sel.insertAdjacentHTML("afterbegin",
+        `<option value="${esc(m.active)}" selected>${esc(m.active)} - not pulled</option>`);
+    }
+  }catch(e){sel.innerHTML='<option>'+esc(e.message.slice(0,40))+'</option>';sel.disabled=true}
+}
+
+$("model").onchange=async()=>{
+  const name=$("model").value;
+  $("model").disabled=true;
+  try{await api("/code/models",{method:"POST",body:JSON.stringify({name})});
+      toast("Now using "+name,"ok");await refresh();}
+  catch(e){toast(e.message,"bad")}
+  finally{$("model").disabled=false}
+};
+
 async function openDiff(taskId){
   current=tasks.find(t=>t.id===taskId)||current;
   try{
     const d=(await api("/code/tasks/"+taskId+"/diff")).diff;
-    const html=!d.trim()?'<span class="dl">This task changed nothing.</span>':
-      d.split("\\n").map(l=>{
-        const c=l.startsWith("+++")||l.startsWith("---")||l.startsWith("diff ")||l.startsWith("index ")?"h":
-                l.startsWith("@@")?"at":l.startsWith("+")?"a":l.startsWith("-")?"d":"";
-        return '<span class="dl '+c+'">'+esc(l)+"</span>";}).join("");
+    const html=!d.trim()?'<span class="dl">This task changed nothing.</span>':renderDiffText(d);
     const id="d:"+taskId;
     tabs=tabs.filter(t=>t.id!==id);
     openTab({id,kind:"diff",title:"diff · "+(current&&current.branch||taskId).split("/").pop(),html});
@@ -427,6 +482,9 @@ function drawTasks(){
       <div class="m"><span class="st ${state}">${state}</span>
         ${t.commits?`<span>${t.commits} commit${t.commits>1?"s":""}</span>`:""}
         ${t.files.length?`<span>${t.files.length} file${t.files.length>1?"s":""}</span>`:""}</div>
+      ${t.files.length ? `<div class="files">${t.files.map(f =>
+        `<span class="chg" data-t="${t.id}" data-f="${esc(f)}" title="Show what changed in this file">${esc(f)}</span>`
+      ).join("")}</div>` : ""}
       ${t.error?`<div class="m err">${esc(t.error)}</div>`:""}
       ${prog.length?`<div class="prog">${prog.map(p=>`<div class="pl ${esc(p.kind)}">${esc(p.text)}</div>`).join("")}</div>`:""}
       ${act?`<div class="acts">
@@ -435,7 +493,9 @@ function drawTasks(){
         <button data-a="undo" data-id="${t.id}" class="bad">Discard</button></div>`:""}
     </div>`}).join("");
   $("tasks").querySelectorAll(".tk").forEach(n=>n.onclick=e=>{
-    if(e.target.dataset.a)return;openDiff(n.dataset.id)});
+    if(e.target.dataset.a||e.target.dataset.f)return;openDiff(n.dataset.id)});
+  $("tasks").querySelectorAll(".chg").forEach(n=>n.onclick=e=>{
+    e.stopPropagation();openFileDiff(n.dataset.t,n.dataset.f)});
   $("tasks").querySelectorAll("button[data-a]").forEach(b=>b.onclick=async e=>{
     e.stopPropagation();const id=b.dataset.id,a=b.dataset.a;
     if(a==="diff")return openDiff(id);
@@ -457,6 +517,7 @@ async function refresh(){
     $("send").disabled=!!status.busy;
     $("busy").textContent=status.busy?"working…":"";
   }catch(e){$("repo").textContent=e.message;$("repo").className="chip"}
+  await loadModels();
   try{tree=(await api("/code/tree")).files;drawTree()}catch(e){}
   try{tasks=await api("/code/tasks");
       if(current)current=tasks.find(t=>t.id===current.id)||current;drawTasks()}catch(e){}
@@ -553,12 +614,12 @@ $("key").onkeydown=e=>{if(e.key==="Enter")$("save").click()};
 
 /* ---------- editor mechanics ---------- */
 function gutter(){
-  const n=$("edit").value.split("\n").length;
-  let s="";for(let i=1;i<=n;i++)s+=i+"\n";
+  const n=$("edit").value.split("\\n").length;
+  let s="";for(let i=1;i<=n;i++)s+=i+"\\n";
   $("gutter").textContent=s;
 }
 function caret(){
-  const ed=$("edit"),upto=ed.value.slice(0,ed.selectionStart).split("\n");
+  const ed=$("edit"),upto=ed.value.slice(0,ed.selectionStart).split("\\n");
   $("b-pos").textContent="Ln "+upto.length+", Col "+(upto[upto.length-1].length+1);
 }
 /* Tab indents instead of leaving the editor, and Enter keeps the indent.
@@ -572,11 +633,11 @@ $("edit").addEventListener("keydown",e=>{
     ed.value=ed.value.slice(0,s)+"    "+ed.value.slice(en);
     ed.selectionStart=ed.selectionEnd=s+4;ed.dispatchEvent(new Event("input"));
   }else if(e.key==="Enter"){
-    const s=ed.selectionStart,line=ed.value.slice(0,s).split("\n").pop();
-    const pad=(line.match(/^[ \t]*/)||[""])[0]+(/[:{[(]\s*$/.test(line)?"    ":"");
+    const s=ed.selectionStart,line=ed.value.slice(0,s).split("\\n").pop();
+    const pad=(line.match(/^[ \\t]*/)||[""])[0]+(/[:{[(]\\s*$/.test(line)?"    ":"");
     if(pad){
       e.preventDefault();
-      ed.value=ed.value.slice(0,s)+"\n"+pad+ed.value.slice(ed.selectionEnd);
+      ed.value=ed.value.slice(0,s)+"\\n"+pad+ed.value.slice(ed.selectionEnd);
       ed.selectionStart=ed.selectionEnd=s+1+pad.length;
       ed.dispatchEvent(new Event("input"));
     }
@@ -603,8 +664,8 @@ function jumpFind(d){
   findAt=(findAt+d+findHits.length)%findHits.length;
   const ed=$("edit"),at=findHits[findAt],q=$("findq").value;
   ed.focus();ed.setSelectionRange(at,at+q.length);
-  const upto=ed.value.slice(0,at).split("\n").length;
-  const total=ed.value.split("\n").length;
+  const upto=ed.value.slice(0,at).split("\\n").length;
+  const total=ed.value.split("\\n").length;
   ed.scrollTop=Math.max(0,(upto-8)*(ed.scrollHeight/total));
   $("findn").textContent=(findAt+1)+" / "+findHits.length;caret();
 }
@@ -634,6 +695,8 @@ window.addEventListener("appinstalled",()=>{$("install").style.display="none"});
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("/sw.js").catch(()=>{/* blocked; the app still runs */});
 }
+
+/* resizable panes, remembered */
 
 /* resizable panes, remembered */
 function drag(handle,varName,storeKey,invert){

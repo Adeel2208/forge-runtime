@@ -573,11 +573,17 @@ class AgentRuntime:
                     step_id=step_id,
                     step_index=state.step_index,
                     payload={
+                        # Deliberately does not claim the earlier attempt
+                        # succeeded. A repeated call is just as often a failed
+                        # one being resent unchanged, and telling a model its
+                        # failed edit "is done" is worse than saying nothing:
+                        # it argues for exactly the wrong next move.
                         "error": (
-                            f"You proposed {action.tool} again with arguments that were "
-                            "already used. It is done, and its result is in OBSERVATIONS. "
-                            "Do not call it again. If the GOAL is already satisfied by "
-                            'what you have, reply now with {"kind": "ANSWER", ...}.'
+                            f"You proposed {action.tool} with arguments you have "
+                            "already tried. Check OBSERVATIONS and PREVIOUS FAILURES: "
+                            "if that attempt succeeded, do not repeat it; if it failed, "
+                            "change the arguments rather than sending the same ones "
+                            'again. If the GOAL is already met, reply {"kind": "ANSWER", ...}.'
                         )
                     },
                 )
