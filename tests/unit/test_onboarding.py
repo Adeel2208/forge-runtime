@@ -147,3 +147,64 @@ def test_ui_is_a_registered_command() -> None:
 
     names = {c.name or c.callback.__name__ for c in app.registered_commands}
     assert "ui" in names
+
+
+# -- live progress ---------------------------------------------------------
+
+
+def _event(kind: str, payload: dict[str, Any], step: int = 1) -> Any:
+    from datetime import UTC, datetime
+
+    from forge.core.enums import EventType
+    from forge.core.events import Event
+
+    return Event(
+        seq=1, ts=datetime.now(UTC), type=EventType(kind),
+        run_id="r", step_index=step, payload=payload,
+    )
+
+
+def test_progress_reports_the_work_not_the_whole_log() -> None:
+    """A local model takes ~30s on a two-step task and the CLI printed nothing
+    until it finished, which is indistinguishable from a hang - and the
+    reasonable response to a hang is Ctrl-C."""
+    from forge.cli import _progress_line
+
+    assert "step 1" in str(_progress_line(_event("STEP_STARTED", {"index": 1})))
+    assert "save_note" in str(_progress_line(_event("PROPOSAL_RECEIVED", {"tool": "save_note"})))
+    assert "save_note" in str(
+        _progress_line(_event("EFFECT_OBSERVED", {"tool": "save_note", "ok": True}))
+    )
+
+
+def test_progress_stays_quiet_for_bookkeeping_events() -> None:
+    """Echoing everything would just be `forge trace`, which already exists."""
+    from forge.cli import _progress_line
+
+    for kind in ("PHASE_ENTERED", "CHECKPOINT_WRITTEN", "PERMIT_ISSUED", "STEP_COMMITTED"):
+        assert _progress_line(_event(kind, {})) is None
+
+
+def test_progress_surfaces_refusals_and_repeats() -> None:
+    """The two things a watching user most needs to know are not errors."""
+    from forge.cli import _progress_line
+
+    denied = str(_progress_line(
+        _event("POLICY_DECIDED", {"decision": "DENY", "capability": "SEND", "reason": "ungranted"})
+    ))
+    assert "refused" in denied and "SEND" in denied
+
+    reused = str(_progress_line(_event("EFFECT_REUSED", {"tool": "save_note", "ok": True})))
+    assert "already done" in reused and "not repeated" in reused
+
+    warned = str(_progress_line(_event("LOOP_DETECTED", {"action": "warned"})))
+    assert "warned once" in warned
+
+
+def test_a_failed_effect_reads_as_a_failure() -> None:
+    from forge.cli import _progress_line
+
+    line = str(_progress_line(
+        _event("EFFECT_OBSERVED", {"tool": "publish", "ok": False, "error": "boom"})
+    ))
+    assert "failed" in line and "publish" in line

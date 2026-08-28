@@ -8,6 +8,7 @@ trail, `replay` proves determinism, `bench` produces the report.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -167,6 +168,7 @@ def run(
     ] = "",
     max_steps: Annotated[int, typer.Option(help="Override the step ceiling.")] = 0,
     approve: Annotated[bool, typer.Option(help="Auto-approve irreversible actions.")] = False,
+    quiet: Annotated[bool, typer.Option(help="Suppress live progress.")] = False,
 ) -> None:
     """Run a task against the configured model and tools.
 
@@ -202,9 +204,25 @@ def run(
                     "  what the model already knows. Set `tools` in forge.toml or pass\n"
                     "  --tools to grant some.\n"
                 )
-            result = await forge.run(
-                goal, tools=allow, max_steps=max_steps or None
+            # Mint the id here so the progress tail can follow the run from
+            # its first event rather than joining halfway through.
+            from forge.ids import new_id
+
+            run_id = new_id("run")
+            stop = asyncio.Event()
+            watcher = (
+                None if quiet else asyncio.create_task(_stream_progress(forge, run_id, stop))
             )
+            _echo("")
+            try:
+                result = await forge.run(
+                    goal, tools=allow, max_steps=max_steps or None, run_id=run_id
+                )
+            finally:
+                stop.set()
+                if watcher is not None:
+                    with contextlib.suppress(Exception):
+                        await watcher
 
             _echo(f"\n  status : {result.status.value}")
             _echo(f"  run_id : {result.run_id}")
@@ -219,11 +237,98 @@ def run(
                 _echo(f"\n  {result.answer}\n")
             if result.error:
                 _echo(f"  error  : {result.error}\n")
+                hint = await _failure_hint(result.error, forge)
+                if hint:
+                    _echo(f"  fix    : {hint}\n")
             _echo(f"  inspect: forge trace {result.run_id}\n")
             return 0 if result.ok else 1
 
     del approve  # approval flows through the policy bundle, not a CLI flag
     raise typer.Exit(asyncio.run(main()))
+
+
+def _progress_line(event: Any) -> str | None:
+    """One short line for an event worth watching, or None to stay quiet.
+
+    Only the events that answer "is it still working, and on what". Echoing
+    the whole log would be `forge trace`, which is a different command for a
+    different question.
+    """
+    from forge.coding.ui import accent, dim, error, ok, warn
+
+    kind = event.type.value
+    p = event.payload
+    step = event.step_index or 0
+
+    if kind == "STEP_STARTED":
+        return dim(f"  step {step}")
+    if kind == "MODEL_CALLED":
+        usage = p.get("usage") or {}
+        got = usage.get("output_tokens") or 0
+        return dim(f"    thought for {got} tokens" if got else "    thinking")
+    if kind == "PROPOSAL_RECEIVED":
+        return accent(f"    proposes {p['tool']}") if p.get("tool") else dim("    answering")
+    if kind == "POLICY_DECIDED" and p.get("decision") == "DENY":
+        return warn(f"    refused  {p.get('capability') or ''} - {p.get('reason', '')}")
+    if kind == "EFFECT_OBSERVED":
+        return (
+            ok(f"    ran      {p.get('tool')}")
+            if p.get("ok")
+            else error(f"    failed   {p.get('tool')}: {str(p.get('error', ''))[:60]}")
+        )
+    if kind == "EFFECT_REUSED":
+        return warn(f"    skipped  {p.get('tool')} - already done, not repeated")
+    if kind == "LOOP_DETECTED":
+        act = p.get("action")
+        return warn(f"    looping  {'warned once' if act == 'warned' else 'halting'}")
+    if kind == "RUN_RESUMED":
+        return warn("    resumed from checkpoint")
+    return None
+
+
+async def _stream_progress(forge: Any, run_id: str, stop: asyncio.Event) -> None:
+    """Render the run as it happens, by tailing its own event log.
+
+    A local model takes half a minute on a two-step task, and the CLI printed
+    nothing at all until it finished - which is indistinguishable from a hang,
+    and the reasonable response to a hang is Ctrl-C.
+
+    Nothing new is instrumented for this: it tails the same durable log that
+    `trace` reads and the console renders. If the display is wrong, the log is
+    wrong, and that is worth knowing.
+    """
+    seen = 0
+    while not stop.is_set():
+        with contextlib.suppress(Exception):
+            for event in await forge.events(run_id, after_seq=seen):
+                seen = max(seen, event.seq)
+                line = _progress_line(event)
+                if line:
+                    _echo(line)
+        with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=0.35)
+
+
+async def _failure_hint(error: str, forge: Any) -> str | None:
+    """Turn a run failure into the command that fixes it, where one exists.
+
+    `forge doctor` already says "start it with `ollama serve`", but doctor is
+    not what people type - `forge run` is, and it was printing the raw
+    provider error. Having the friendlier message live only in the diagnostic
+    nobody runs first is the same as not having it.
+    """
+    lowered = error.lower()
+    if "unavailable" not in lowered and "unreachable" not in lowered:
+        return None
+    for provider in forge._build_providers():
+        diagnose = getattr(provider, "diagnose", None)
+        if diagnose is None:
+            continue
+        with contextlib.suppress(Exception):
+            detail = await diagnose()
+            if detail:
+                return str(detail)
+    return None
 
 
 @app.command()
