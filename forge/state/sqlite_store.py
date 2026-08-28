@@ -314,13 +314,24 @@ class SQLiteEventStore:
 
     def _list_runs_sync(self, limit: int) -> list[sqlite3.Row]:
         conn = self._require()
+        # Status is derived in SQL from the presence of a terminal event rather
+        # than by projecting each run. A listing of fifty runs would otherwise
+        # be fifty folds, and the answer to "did it finish" does not need one:
+        # the terminal event either exists or it does not. Anything without one
+        # is still in flight or was interrupted, and the run view - which does
+        # project - is what distinguishes those.
         return list(
             conn.execute(
                 "SELECT run_id,"
                 "       MIN(ts)   AS started,"
                 "       MAX(ts)   AS updated,"
                 "       COUNT(*)  AS events,"
-                "       MAX(seq)  AS last_seq"
+                "       MAX(seq)  AS last_seq,"
+                "       COALESCE(MAX(CASE type"
+                "           WHEN 'RUN_COMPLETED' THEN 'COMPLETED'"
+                "           WHEN 'RUN_FAILED'    THEN 'FAILED'"
+                "           WHEN 'RUN_ABORTED'   THEN 'ABORTED'"
+                "       END), 'RUNNING') AS status"
                 " FROM events GROUP BY run_id ORDER BY last_seq DESC LIMIT ?",
                 (limit,),
             )

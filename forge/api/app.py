@@ -28,9 +28,11 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from forge import __version__
+from forge.api.dashboard import DASHBOARD_HTML
 from forge.api.security import ApiKeyAuth, Principal, RateLimiter
 from forge.config import ForgeConfig
 from forge.core.enums import RunStatus
@@ -316,6 +318,19 @@ def create_app(
             "kind": ckpt.kind,
             "created_at": ckpt.created_at.isoformat() if ckpt.created_at else None,
         }
+
+    # -- console -----------------------------------------------------------
+
+    @app.get("/", include_in_schema=False)
+    async def console() -> HTMLResponse:
+        """The operator console.
+
+        Unauthenticated on purpose: the page is markup and contains no run
+        data. Every request it subsequently makes carries the operator's API
+        key, so the authorization boundary is unchanged - serving this does
+        not widen what an anonymous caller can read.
+        """
+        return HTMLResponse(DASHBOARD_HTML)
 
     # -- operations --------------------------------------------------------
 
