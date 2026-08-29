@@ -168,6 +168,8 @@ mark{background:var(--gold);color:#000}
 #goal{font-size:12.5px}
 .row{display:flex;gap:7px;align-items:center;margin-top:7px}
 .hint{font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.45}
+.warnbox{font-size:11px;color:var(--warn);margin-top:7px;line-height:1.45;
+  border-left:2px solid var(--warn);padding-left:8px}
 .err{color:var(--bad);font-size:11px}
 
 /* status bar */
@@ -253,6 +255,7 @@ mark{background:var(--gold);color:#000}
           <button id="send" class="go">Give task</button>
           <span class="grow"></span><span id="cerr" class="err"></span>
         </div>
+        <div id="warn" class="warnbox" style="display:none"></div>
         <div class="hint">Nothing reaches your branch until you press Merge.</div>
       </div>
     </div>
@@ -610,7 +613,20 @@ async function refresh(){
     $("dirty").style.cursor=status.clean?"default":"pointer";
     $("b-branch").textContent="⎇ "+status.branch;
     $("b-model").textContent=status.model;$("b-policy").textContent=status.policy;
-    $("send").disabled=!!status.busy;
+    // A repository with no commits cannot be worked on: the agent branches
+    // from HEAD and there is no HEAD. Saying so here, next to a disabled
+    // button, beats letting someone write a task and then be refused.
+    const noCommits=status.has_commits===false;
+    $("send").disabled=!!status.busy||noCommits;
+    $("goal").disabled=noCommits;
+    $("goal").placeholder=noCommits
+      ? "Make the first commit in this repository, then reload."
+      : "Describe a change. The agent works on its own branch.";
+    $("warn").textContent=noCommits
+      ? "No commits yet - the agent branches from HEAD, so make one first: " +
+        "git add -A && git commit -m 'initial'"
+      : "";
+    $("warn").style.display=noCommits?"block":"none";
     $("busy").textContent=status.busy?"working…":"";
   }catch(e){$("repo").textContent=e.message;$("repo").className="chip"}
   await loadModels();

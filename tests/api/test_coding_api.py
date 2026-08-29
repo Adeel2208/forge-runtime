@@ -481,3 +481,27 @@ def test_ignored_files_stay_out_of_the_tree(tmp_path) -> None:
     assert not any(f.startswith("junk/") for f in files)
     assert "stale.pyc" not in files
     assert ".gitignore" in files, "the ignore file itself is a real file"
+
+
+def test_status_survives_a_repository_with_no_commits(tmp_path) -> None:
+    """`rev-parse HEAD` fails with 128 when there is no HEAD, and status used
+    to raise - leaving the header blank on exactly the repository that most
+    needs an explanation."""
+    import subprocess
+
+    root = tmp_path / "unborn"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t.t"],
+                 ["config", "user.name", "t"]):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+    status = CodingService(root).status()
+
+    assert status["has_commits"] is False
+    assert status["branch"], "a branch name, even an unborn one"
+    assert status["name"] == "unborn"
+
+
+def test_status_reports_commits_where_there_are_some(tmp_path) -> None:
+    assert CodingService(_repo(tmp_path)).status()["has_commits"] is True

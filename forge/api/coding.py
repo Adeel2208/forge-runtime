@@ -160,10 +160,25 @@ class CodingService:
             providers = self.agent.config.providers
             if providers:
                 model = f"{providers[0].kind}/{providers[0].model}"
+        # A repository with no commits has no HEAD, so `rev-parse HEAD` fails
+        # with 128 and the whole status call used to raise - leaving the header
+        # blank on exactly the repository that most needs an explanation.
+        # `branch --show-current` answers on an unborn branch, and the missing
+        # commit is reported as a fact rather than an error.
+        branch, has_commits = "", False
+        with contextlib.suppress(GitError):
+            has_commits = self.agent.repo.has_commits()
+        with contextlib.suppress(GitError):
+            branch = (
+                repo.current_branch() if has_commits
+                else repo.run("branch", "--show-current").strip()
+            )
+
         return {
             "root": str(self.repo),
             "name": self.repo.name,
-            "branch": repo.current_branch(),
+            "branch": branch or "(no branch yet)",
+            "has_commits": has_commits,
             "clean": repo.is_clean(),
             "dirty_files": repo.dirty_files()[:50],
             "model": model,
