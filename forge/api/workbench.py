@@ -493,22 +493,61 @@ async function saveActive(){
 function drawTree(){
   const q=($("filter").value||"").toLowerCase();
   const files=q?tree.filter(f=>f.toLowerCase().includes(q)):tree;
-  const touched=new Set((current&&current.files)||[]);
-  const dirs={};
-  files.forEach(f=>{const i=f.lastIndexOf("/");(dirs[i<0?"":f.slice(0,i)]||=[]).push(f)});
-  const html=Object.keys(dirs).sort().map(d=>{
-    const open=q||openDirs.has(d)||d==="";
-    const head=d?`<div class="node dir" data-d="${esc(d)}"><span class="tw">${open?"▾":"▸"}</span>${esc(d)}</div>`:"";
-    const kids=open?dirs[d].map(f=>
-      `<div class="node ${touched.has(f)?"touch":""}" data-p="${esc(f)}" style="padding-left:${d?24:12}px">${esc(f.split("/").pop())}</div>`).join(""):"";
-    return head+kids;}).join("");
-  $("tree").innerHTML=html||'<div class="empty">No files match.</div>';
   $("fc").textContent=files.length;
+
+  if(!files.length){
+    $("tree").innerHTML='<div class="empty">'+
+      (tree.length?"No file matches that filter."
+                 :"This repository has no files git can see.<br><br>"+
+                  "Everything may be ignored by .gitignore, or the folder is empty.")+
+      "</div>";
+    return;
+  }
+
+  /* A real tree, not a list of full paths grouped by parent. Deep projects
+     are unreadable as the latter - "src/api/routes/v2/users.py" repeated
+     forty times, once per file - and a folder you cannot collapse is a folder
+     you have to scroll past. */
+  const root={dirs:new Map(),files:[]};
+  for(const f of files){
+    const parts=f.split("/");
+    let node=root;
+    for(let i=0;i<parts.length-1;i++){
+      if(!node.dirs.has(parts[i]))node.dirs.set(parts[i],{dirs:new Map(),files:[]});
+      node=node.dirs.get(parts[i]);
+    }
+    node.files.push({name:parts[parts.length-1],path:f});
+  }
+
+  const touched=new Set((current&&current.files)||[]);
+  const out=[];
+  const walk=(node,prefix,depth)=>{
+    for(const name of [...node.dirs.keys()].sort()){
+      const full=prefix?prefix+"/"+name:name;
+      /* A filter is a search: showing collapsed folders would hide the hits. */
+      const open=q||openDirs.has(full);
+      out.push('<div class="node dir" data-d="'+esc(full)+'" style="padding-left:'+
+        (6+depth*12)+'px"><span class="tw">'+(open?"\u25be":"\u25b8")+"</span>"+esc(name)+"</div>");
+      if(open)walk(node.dirs.get(name),full,depth+1);
+    }
+    for(const f of node.files.sort((a,b)=>a.name.localeCompare(b.name))){
+      out.push('<div class="node '+(touched.has(f.path)?"touch":"")+
+        '" data-p="'+esc(f.path)+'" style="padding-left:'+(20+depth*12)+
+        'px" title="'+esc(f.path)+'">'+esc(f.name)+"</div>");
+    }
+  };
+  walk(root,"",0);
+
+  $("tree").innerHTML=out.join("");
   $("tree").querySelectorAll("[data-p]").forEach(n=>n.onclick=()=>openFile(n.dataset.p));
   $("tree").querySelectorAll("[data-d]").forEach(n=>n.onclick=()=>{
-    const d=n.dataset.d;openDirs.has(d)?openDirs.delete(d):openDirs.add(d);
-    store.set("dirs",[...openDirs]);drawTree();});
+    const d=n.dataset.d;
+    openDirs.has(d)?openDirs.delete(d):openDirs.add(d);
+    store.set("dirs",[...openDirs]);
+    drawTree();
+  });
 }
+
 
 /* ---------- agent ---------- */
 function drawTasks(){
@@ -575,7 +614,15 @@ async function refresh(){
     $("busy").textContent=status.busy?"working…":"";
   }catch(e){$("repo").textContent=e.message;$("repo").className="chip"}
   await loadModels();
-  try{tree=(await api("/code/tree")).files;drawTree()}catch(e){}
+  try{
+    tree=(await api("/code/tree")).files;
+    // Open the top level the first time a repository is seen: an explorer
+    // that starts fully collapsed looks identical to one that found nothing.
+    if(!openDirs.size&&tree.length){
+      for(const f of tree){const i=f.indexOf("/");if(i>0)openDirs.add(f.slice(0,i));}
+    }
+    drawTree();
+  }catch(e){}
   try{tasks=await api("/code/tasks");
       if(current)current=tasks.find(t=>t.id===current.id)||current;drawTasks()}catch(e){}
   if(timer)clearTimeout(timer);

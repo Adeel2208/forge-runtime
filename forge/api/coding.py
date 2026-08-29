@@ -249,16 +249,24 @@ class CodingService:
         return {"active": name}
 
     def tree(self) -> list[str]:
-        """Tracked files, from git rather than a directory walk.
+        """Every file in the repository that git is not ignoring.
 
-        `git ls-files` already honours .gitignore, so the tree cannot fill up
-        with `node_modules` or `.venv` - and what the UI shows is exactly what
-        the agent would consider part of the repository.
+        `--cached --others --exclude-standard` is tracked *plus* untracked, and
+        the distinction matters more than it looks: plain `ls-files` lists only
+        tracked files, so a project whose first commit has not happened yet
+        shows an empty explorer. One real repository here had 194 files and
+        displayed none of them.
+
+        Still asked of git rather than walked, so `.gitignore` is honoured for
+        free and the tree cannot fill with `node_modules` or `.venv` - and what
+        the explorer shows stays exactly what the agent would consider part of
+        the repository.
         """
-        out = self.agent.repo.run("ls-files")
-        return sorted(line.strip() for line in out.splitlines() if line.strip())[
-            :MAX_TREE_ENTRIES
-        ]
+        out = self.agent.repo.run(
+            "ls-files", "--cached", "--others", "--exclude-standard"
+        )
+        seen = {line.strip() for line in out.splitlines() if line.strip()}
+        return sorted(seen)[:MAX_TREE_ENTRIES]
 
     def _safe(self, relative: str) -> Path:
         """Resolve inside the repository, or refuse.

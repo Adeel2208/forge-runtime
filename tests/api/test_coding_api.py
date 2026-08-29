@@ -433,3 +433,51 @@ def test_a_task_with_no_run_has_an_empty_trail(tmp_path) -> None:
     service = CodingService(_repo(tmp_path))
     task = _branch_with_change(service, "forge/code_y")
     assert asyncio.run(service.audit(task.id)) == []
+
+
+# -- the explorer ----------------------------------------------------------
+
+
+def test_untracked_files_appear_in_the_tree(tmp_path) -> None:
+    """Plain `git ls-files` lists tracked files only, so a project whose first
+    commit has not happened shows an empty explorer. One real repository had
+    194 files and displayed none of them."""
+    root = _repo(tmp_path)
+    (root / "brand_new.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "src" / "also_new.py").write_text("y = 2\n", encoding="utf-8")
+
+    files = CodingService(root).tree()
+
+    assert "brand_new.py" in files, "an uncommitted file is still a file"
+    assert "src/also_new.py" in files
+    assert "src/calc.py" in files, "tracked files are still listed"
+
+
+def test_a_repository_with_nothing_committed_still_lists_its_files(tmp_path) -> None:
+    import subprocess
+
+    root = tmp_path / "fresh"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "app.py").write_text("print(1)\n", encoding="utf-8")
+    (root / "notes.md").write_text("# notes\n", encoding="utf-8")
+    for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t.t"],
+                 ["config", "user.name", "t"]):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+    files = CodingService(root).tree()
+    assert sorted(files) == ["notes.md", "src/app.py"]
+
+
+def test_ignored_files_stay_out_of_the_tree(tmp_path) -> None:
+    """Listing untracked files must not mean listing build output."""
+    root = _repo(tmp_path)
+    (root / ".gitignore").write_text("junk/\n*.pyc\n", encoding="utf-8")
+    (root / "junk").mkdir()
+    (root / "junk" / "big.bin").write_text("x", encoding="utf-8")
+    (root / "stale.pyc").write_text("x", encoding="utf-8")
+
+    files = CodingService(root).tree()
+
+    assert not any(f.startswith("junk/") for f in files)
+    assert "stale.pyc" not in files
+    assert ".gitignore" in files, "the ignore file itself is a real file"
