@@ -714,6 +714,7 @@ def studio(
     import secrets
     import threading
     import webbrowser
+    from urllib.parse import quote
 
     try:
         import uvicorn
@@ -740,7 +741,10 @@ def studio(
         os.environ["FORGE_API_KEYS"] = f"studio:{secrets.token_urlsafe(18)}"
     token = os.environ["FORGE_API_KEYS"].split(":", 1)[1]
     os.environ["FORGE_REPO"] = str(repo)
-    url = f"http://127.0.0.1:{port}/code"
+    # The key travels in the fragment, which browsers never send to the server.
+    # The page consumes it once and strips it from the address, so the window
+    # opens signed in rather than asking someone to copy a secret by hand.
+    url = f"http://127.0.0.1:{port}/code#key={quote(token)}"
 
     _echo("")
     _echo(f"  FORGE Studio   {repo.name}")

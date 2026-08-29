@@ -116,6 +116,10 @@ jobs:
       - name: The shell parses
         run: node --check desktop/main.js
 
+      - name: The shell's own tests
+        working-directory: desktop
+        run: node --test test/*.test.js
+
       - name: The served pages parse
         # These skip when node is absent, so they must run somewhere it is not.
         run: pytest tests/api/test_page_syntax.py tests/api/test_ui_coverage.py -q

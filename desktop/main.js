@@ -162,6 +162,21 @@ function waitForServer(port, timeoutMs = 60000) {
   });
 }
 
+/**
+ * Should this process's exit be reported to the user?
+ *
+ * Only when the process that died is still the one we are relying on. Opening
+ * another folder stops the running server and starts a replacement, and the
+ * old process's exit event arrives *after* `server` points at the new one - so
+ * a check for "is there a server?" answers yes and reports a deliberate
+ * shutdown as a crash, quoting the old server's startup log as the evidence.
+ *
+ * Exported for the test: this is a race, and a race is worth pinning down.
+ */
+function shouldReportExit(current, exited, windowAlive) {
+  return current === exited && windowAlive;
+}
+
 function stopServer() {
   if (!server) return;
   const child = server;
@@ -194,7 +209,7 @@ async function startServer(repo) {
   const port = await freePort();
   const key = crypto.randomBytes(18).toString("base64url");
 
-  server = spawn(
+  const child = spawn(
     backend.cmd,
     [...backend.args, "studio", "--port", String(port), "--no-open"],
     {
@@ -217,7 +232,7 @@ async function startServer(repo) {
   );
 
   let stderr = "";
-  server.stderr.on("data", (b) => {
+  child.stderr.on("data", (b) => {
     const chunk = b.toString();
     stderr += chunk.slice(0, 4000);
     log("server:", chunk.trimEnd().split(/\r?\n/).slice(-1)[0]);
@@ -225,18 +240,16 @@ async function startServer(repo) {
   // stdout must be drained: an unread pipe fills, and a blocked write is
   // indistinguishable from a hung server.
   let stdout = "";
-  server.stdout.on("data", (b) => { stdout += b.toString().slice(0, 4000); });
-  server.on("error", (err) => log("spawn error:", err.message));
-  server.on("exit", (code) => {
+  child.stdout.on("data", (b) => { stdout += b.toString().slice(0, 4000); });
+  child.on("error", (err) => log("spawn error:", err.message));
+  child.on("exit", (code) => {
     log("server exited with", code);
     const why = (stderr + stdout).trim();
     if (why) {
       const tail = why.split(/\r?\n/).filter(Boolean).slice(-6).join(" | ");
       log("server said:", tail);
     }
-    // A server that dies while the window is open leaves a blank app; say so
-    // rather than letting the user stare at it.
-    if (server && win && !win.isDestroyed()) {
+    if (shouldReportExit(server, child, win && !win.isDestroyed())) {
       dialog.showErrorBox(
         "The FORGE server stopped",
         `It exited with code ${code}.\n\n${stderr.slice(-1200)}`
@@ -244,7 +257,8 @@ async function startServer(repo) {
     }
   });
 
-  log("spawned server on port", port, "pid", server.pid);
+  log("spawned server on port", port, "pid", child.pid);
+  server = child;
   await waitForServer(port);
   log("server ready");
   current = { repo, port, key };
@@ -501,3 +515,6 @@ app.on("before-quit", stopServer);
 process.on("exit", stopServer);
 process.on("SIGINT", () => { stopServer(); process.exit(0); });
 process.on("SIGTERM", () => { stopServer(); process.exit(0); });
+
+// Exported only for the test harness; Electron ignores module.exports here.
+module.exports = { shouldReportExit };
