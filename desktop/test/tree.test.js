@@ -106,3 +106,46 @@ test("an empty repository explains itself rather than rendering a blank pane", (
   const src = fs.readFileSync(WORKBENCH, "utf8");
   assert.ok(src.includes("no files git can see"));
 });
+
+/* ---- accessibility and resilience, asserted against the shipped page ---- */
+
+const PAGE = fs.readFileSync(WORKBENCH, "utf8");
+
+test("the tree is a real tree to a screen reader", () => {
+  assert.ok(PAGE.includes('role="tree"'), "the container is a tree");
+  assert.match(PAGE, /role="treeitem"[\s\S]*?data-d=/, "folders are tree items");
+  assert.ok(PAGE.includes('aria-expanded='), "folders report expansion state");
+});
+
+test("the tree can be driven from the keyboard", () => {
+  // A developer tool that needs a mouse excludes people who work without one.
+  for (const key of ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Home", "End"]) {
+    assert.ok(PAGE.includes(`"${key}"`), `no handler for ${key}`);
+  }
+});
+
+test("live regions are announced", () => {
+  assert.ok(PAGE.includes('aria-live="polite"'));
+  assert.ok(PAGE.includes('role="alert"'), "the offline banner interrupts");
+});
+
+test("a dead server is shown, not swallowed", () => {
+  // Every request failing silently while the last render stays on screen makes
+  // a dead backend look exactly like an idle one.
+  assert.ok(PAGE.includes("setOffline(true"), "a failed fetch raises the banner");
+  assert.ok(PAGE.includes('$("retry")'), "and offers a way back");
+});
+
+test("panes collapse and the choice is remembered", () => {
+  assert.ok(PAGE.includes("#body.no-left"), "a real collapsed layout, not display:none alone");
+  assert.ok(PAGE.includes('store.set(which'), "the choice is persisted");
+  assert.ok(PAGE.includes('togglePane("left")') && PAGE.includes('togglePane("right")'));
+});
+
+test("narrow windows get a stacked layout", () => {
+  assert.match(PAGE, /@media \(max-width:760px\)/);
+});
+
+test("motion is optional", () => {
+  assert.ok(PAGE.includes("prefers-reduced-motion"));
+});

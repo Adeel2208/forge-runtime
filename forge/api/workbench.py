@@ -73,7 +73,7 @@ textarea{resize:none}
 ::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
 
 /* frame */
-#app{display:grid;grid-template-rows:36px 1fr 22px;height:100vh}
+#app{display:grid;grid-template-rows:36px auto 1fr 22px;height:100vh}
 #title{display:flex;align-items:center;gap:10px;padding:0 10px;background:var(--panel);
   border-bottom:1px solid var(--line);-webkit-app-region:drag;user-select:none}
 #title b{font-size:12px;letter-spacing:.02em}
@@ -85,6 +85,35 @@ textarea{resize:none}
 
 #body{display:grid;grid-template-columns:var(--lw,250px) 5px minmax(0,1fr) 5px var(--rw,330px);
   min-height:0}
+/* Collapsing is a layout, not a fallback: the panes fold to nothing and the
+   centre takes the space, at any width the user chooses. */
+#body.no-left{grid-template-columns:0 0 minmax(0,1fr) 5px var(--rw,330px)}
+#body.no-right{grid-template-columns:var(--lw,250px) 5px minmax(0,1fr) 0 0}
+#body.no-left.no-right{grid-template-columns:0 0 minmax(0,1fr) 0 0}
+#body.no-left #left,#body.no-left #gl,
+#body.no-right #right,#body.no-right #gr{display:none}
+.iconbtn{padding:3px 7px;font-size:12px;line-height:1}
+#offline{display:none;align-items:center;gap:10px;padding:7px 12px;
+  background:var(--bad);color:#fff;font-size:12px}
+#offline.on{display:flex}
+#offline button{background:transparent;border-color:rgba(255,255,255,.55);color:#fff}
+.skel{height:11px;margin:7px 10px;border-radius:3px;background:var(--line);
+  opacity:.55;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.22}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
+.node:focus-visible{background:var(--sel)}
+.welcome{padding:38px 26px;color:var(--muted);font-size:12.5px;line-height:1.75;
+  max-width:520px;margin:0 auto}
+.welcome h2{font-size:15px;color:var(--ink);margin:0 0 10px;font-weight:600}
+.welcome ol{padding-left:18px;margin:10px 0}
+.welcome li{margin:5px 0}
+.welcome kbd{border:1px solid var(--line);border-radius:3px;padding:0 4px;
+  font-size:11px;background:var(--panel)}
+@media (max-width:760px){
+  #body{grid-template-columns:1fr!important;grid-template-rows:auto auto minmax(0,1fr)}
+  .gut{display:none}
+  #left,#right{max-height:32vh}
+}
 .gut{background:transparent;cursor:col-resize}
 .gut:hover{background:var(--accent)}
 .col{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
@@ -205,29 +234,38 @@ mark{background:var(--gold);color:#000}
 
   <div id="title">
     <b>FORGE Studio</b>
+    <button class="x iconbtn" id="tleft" title="Toggle explorer (Ctrl+B)"
+            aria-label="Toggle explorer">&#9776;</button>
     <span id="repo" class="chip"></span>
     <span id="branch" class="chip"></span>
     <span id="dirty" class="chip" title="Your uncommitted changes"></span>
     <span class="grow"></span>
     <select class="x" id="model" title="Local model used by the agent"></select>
     <button class="x" id="install" style="display:none">Install app</button>
+    <button class="x iconbtn" id="tright" title="Toggle agent panel (Ctrl+J)"
+            aria-label="Toggle agent panel">&#9707;</button>
     <button class="x" id="cmd">⌘K Commands</button>
     <input class="x mono" id="key" type="password" placeholder="API key"
            style="width:110px;font-size:11px" autocomplete="off">
     <button class="x" id="save">Use</button>
   </div>
 
-  <div id="body">
+  <div id="offline" role="alert">
+  <span id="offlinemsg">Lost the FORGE server.</span>
+  <button id="retry">Retry</button>
+</div>
+
+<div id="body">
     <div class="col" id="left">
       <div class="hd"><span class="grow">Explorer</span><span id="fc"></span></div>
-      <input id="filter" placeholder="Filter files…">
-      <div class="scroll" id="tree"></div>
+      <input id="filter" placeholder="Filter files…" aria-label="Filter files" aria-controls="tree">
+      <div class="scroll" id="tree" role="tree" aria-label="Files" tabindex="0"></div>
     </div>
     <div class="gut" id="gl"></div>
 
     <div class="col">
-      <div id="tabs"></div>
-      <div id="stage">
+      <div id="tabs" role="tablist" aria-label="Open editors"></div>
+      <div id="stage" role="main">
         <div class="empty">
           Open a file, or describe a change on the right.<br><br>
           <kbd>Ctrl</kbd>+<kbd>K</kbd> commands &nbsp;·&nbsp;
@@ -247,7 +285,7 @@ mark{background:var(--gold);color:#000}
 
     <div class="col" id="right">
       <div class="hd"><span class="grow">Agent</span><span id="busy"></span></div>
-      <div id="tasks"></div>
+      <div id="tasks" role="log" aria-label="Agent tasks" aria-live="polite"></div>
       <div id="ask">
         <textarea id="goal" rows="3"
           placeholder="Describe a change. The agent works on its own branch."></textarea>
@@ -261,7 +299,7 @@ mark{background:var(--gold);color:#000}
     </div>
   </div>
 
-  <div id="bar">
+  <div id="bar" role="status" aria-live="polite">
     <span class="s" id="b-branch">—</span>
     <span class="s" id="b-model">—</span>
     <span class="s" id="b-policy">—</span>
@@ -298,7 +336,10 @@ async function api(path,opts){
   const o=Object.assign({headers:{}},opts||{});
   if(key)o.headers["Authorization"]="Bearer "+key;
   if(o.body)o.headers["Content-Type"]="application/json";
-  const r=await fetch(path,o);
+  let r;
+  try{ r=await fetch(path,o); }
+  catch(err){ setOffline(true,"Lost the FORGE server — it may have stopped."); throw err; }
+  setOffline(false);
   if(r.status===401)throw new Error("Unauthorized — set the API key (top right)");
   if(!r.ok){let d;try{d=(await r.json()).detail}catch(e){d=await r.text()}
             throw new Error(String(d).slice(0,160))}
@@ -545,14 +586,14 @@ function drawTree(){
       const full=prefix?prefix+"/"+segments.join("/"):segments.join("/");
       /* A filter is a search: collapsed folders would hide the hits. */
       const open=q||openDirs.has(full);
-      out.push('<div class="node dir" data-d="'+esc(full)+'" style="padding-left:'+
+      out.push('<div class="node dir" role="treeitem" tabindex="-1" aria-expanded="'+(open?'true':'false')+'" data-d="'+esc(full)+'" style="padding-left:'+
         (6+depth*12)+'px" title="'+esc(full)+'"><span class="tw">'+
         (open?"\u25be":"\u25b8")+"</span>"+esc(label)+"</div>");
       if(open)walk(target,full,depth+1);
     }
     for(const f of [...node.files].sort((a,b)=>a.name.localeCompare(b.name))){
       out.push('<div class="node '+(touched.has(f.path)?"touch":"")+
-        '" data-p="'+esc(f.path)+'" style="padding-left:'+(20+depth*12)+
+        '" role="treeitem" tabindex="-1" data-p="'+esc(f.path)+'" style="padding-left:'+(20+depth*12)+
         'px" title="'+esc(f.path)+'">'+esc(f.name)+"</div>");
     }
   };
@@ -676,6 +717,8 @@ const COMMANDS=[
   {n:"Stop the running task",run:()=>{const r=tasks.find(x=>x.status==="running");
      if(r)api("/code/tasks/"+r.id+"/cancel",{method:"POST"}).then(refresh);
      else toast("Nothing is running")}},
+  {n:"Toggle explorer",k:"Ctrl+B",run:()=>togglePane("left")},
+  {n:"Toggle agent panel",k:"Ctrl+J",run:()=>togglePane("right")},
   {n:"Refresh",k:"Ctrl+R",run:refresh},
   {n:"Open run console",run:()=>location.href="/"},
 ];
@@ -737,6 +780,8 @@ document.addEventListener("keydown",e=>{
   else if(mod&&e.key.toLowerCase()==="s"){e.preventDefault();saveActive()}
   else if(mod&&!e.shiftKey&&e.key.toLowerCase()==="f"){e.preventDefault();openFind()}
   else if(mod&&e.key.toLowerCase()==="w"){e.preventDefault();active&&closeTab(active)}
+  else if(mod&&e.key.toLowerCase()==="b"){e.preventDefault();togglePane("left")}
+  else if(mod&&e.key.toLowerCase()==="j"){e.preventDefault();togglePane("right")}
   else if(mod&&e.key==="Enter"){e.preventDefault();$("send").click()}
 });
 $("cmd").onclick=()=>palette("cmd");
@@ -837,6 +882,71 @@ window.addEventListener("appinstalled",()=>{$("install").style.display="none"});
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("/sw.js").catch(()=>{/* blocked; the app still runs */});
 }
+
+/* ---------- collapsible panes ---------- */
+/* Remembered, because a layout that resets every launch is one the user has to
+   redo every launch. */
+function applyPanes(){
+  $("body").classList.toggle("no-left",!store.get("left",true));
+  $("body").classList.toggle("no-right",!store.get("right",true));
+  $("tleft").setAttribute("aria-pressed",String(!!store.get("left",true)));
+  $("tright").setAttribute("aria-pressed",String(!!store.get("right",true)));
+}
+function togglePane(which){store.set(which,!store.get(which,true));applyPanes()}
+$("tleft").onclick=()=>togglePane("left");
+$("tright").onclick=()=>togglePane("right");
+applyPanes();
+
+/* ---------- the server going away ---------- */
+/* Every request failing silently while the last render stays on screen is the
+   most misleading state a client can be in: a dead backend looks exactly like
+   an idle one. */
+let offline=false;
+function setOffline(on,msg){
+  if(offline===on)return;
+  offline=on;
+  $("offline").classList.toggle("on",on);
+  if(msg)$("offlinemsg").textContent=msg;
+}
+$("retry").onclick=()=>{setOffline(false);refresh()};
+
+/* ---------- keyboard navigation in the tree ---------- */
+/* A developer tool that cannot be driven from the keyboard excludes people who
+   work that way by preference and people who have no choice. */
+function treeRows(){return [...$("tree").querySelectorAll(".node")]}
+function focusRow(i){
+  const rows=treeRows();
+  if(!rows.length)return;
+  const n=Math.max(0,Math.min(i,rows.length-1));
+  rows.forEach(r=>r.tabIndex=-1);
+  rows[n].tabIndex=0;
+  rows[n].focus();
+}
+$("tree").addEventListener("keydown",e=>{
+  const rows=treeRows();
+  if(!rows.length)return;
+  const at=rows.indexOf(document.activeElement);
+  const row=rows[at];
+  if(e.key==="ArrowDown"){e.preventDefault();focusRow(at+1)}
+  else if(e.key==="ArrowUp"){e.preventDefault();focusRow(Math.max(0,at-1))}
+  else if(e.key==="Home"){e.preventDefault();focusRow(0)}
+  else if(e.key==="End"){e.preventDefault();focusRow(rows.length-1)}
+  else if(row&&(e.key==="Enter"||e.key===" ")){
+    e.preventDefault();
+    row.click();
+    // A folder redraws the list, so restore the caret where it was.
+    if(row.dataset.d)setTimeout(()=>focusRow(at),0);
+  }
+  else if(row&&e.key==="ArrowRight"&&row.dataset.d&&row.getAttribute("aria-expanded")==="false"){
+    e.preventDefault();row.click();setTimeout(()=>focusRow(at+1),0);
+  }
+  else if(row&&e.key==="ArrowLeft"&&row.dataset.d&&row.getAttribute("aria-expanded")==="true"){
+    e.preventDefault();row.click();setTimeout(()=>focusRow(at),0);
+  }
+});
+$("tree").addEventListener("focus",()=>{
+  if(!treeRows().some(r=>r.tabIndex===0))focusRow(0);
+});
 
 /* resizable panes, remembered */
 
