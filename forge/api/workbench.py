@@ -524,16 +524,33 @@ function drawTree(){
 
   const touched=new Set((current&&current.files)||[]);
   const out=[];
+  /* A folder whose only content is another folder is collapsed into one row -
+     "a/b/c" rather than three rows each needing a click. Without this, a
+     repository whose top level is one folder containing one folder opens to
+     show a folder and no files, which reads as an empty folder and was
+     reported as one. */
+  const compact=(node,name)=>{
+    const parts=[name];
+    while(node.files.length===0&&node.dirs.size===1){
+      const only=[...node.dirs.keys()][0];
+      parts.push(only);
+      node=node.dirs.get(only);
+    }
+    return {node,label:parts.join("/"),segments:parts};
+  };
+
   const walk=(node,prefix,depth)=>{
     for(const name of [...node.dirs.keys()].sort()){
-      const full=prefix?prefix+"/"+name:name;
-      /* A filter is a search: showing collapsed folders would hide the hits. */
+      const {node:target,label,segments}=compact(node.dirs.get(name),name);
+      const full=prefix?prefix+"/"+segments.join("/"):segments.join("/");
+      /* A filter is a search: collapsed folders would hide the hits. */
       const open=q||openDirs.has(full);
       out.push('<div class="node dir" data-d="'+esc(full)+'" style="padding-left:'+
-        (6+depth*12)+'px"><span class="tw">'+(open?"\u25be":"\u25b8")+"</span>"+esc(name)+"</div>");
-      if(open)walk(node.dirs.get(name),full,depth+1);
+        (6+depth*12)+'px" title="'+esc(full)+'"><span class="tw">'+
+        (open?"\u25be":"\u25b8")+"</span>"+esc(label)+"</div>");
+      if(open)walk(target,full,depth+1);
     }
-    for(const f of node.files.sort((a,b)=>a.name.localeCompare(b.name))){
+    for(const f of [...node.files].sort((a,b)=>a.name.localeCompare(b.name))){
       out.push('<div class="node '+(touched.has(f.path)?"touch":"")+
         '" data-p="'+esc(f.path)+'" style="padding-left:'+(20+depth*12)+
         'px" title="'+esc(f.path)+'">'+esc(f.name)+"</div>");
@@ -546,7 +563,7 @@ function drawTree(){
   $("tree").querySelectorAll("[data-d]").forEach(n=>n.onclick=()=>{
     const d=n.dataset.d;
     openDirs.has(d)?openDirs.delete(d):openDirs.add(d);
-    store.set("dirs",[...openDirs]);
+    store.set("dirs2",[...openDirs]);
     drawTree();
   });
 }
@@ -838,7 +855,7 @@ function drag(handle,varName,storeKey,invert){
 drag($("gl"),"--lw","lw",false);drag($("gr"),"--rw","rw",true);
 document.documentElement.style.setProperty("--lw",store.get("lw",250)+"px");
 document.documentElement.style.setProperty("--rw",store.get("rw",330)+"px");
-(store.get("dirs",[])||[]).forEach(d=>openDirs.add(d));
+(store.get("dirs2",[])||[]).forEach(d=>openDirs.add(d));
 
 refresh();
 </script>
