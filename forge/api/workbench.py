@@ -171,7 +171,31 @@ mark{background:var(--gold);color:#000}
 .empty kbd{font-size:11px}
 
 /* agent */
-#tasks{flex:1;overflow-y:auto;padding:8px 9px;display:flex;flex-direction:column;gap:8px}
+#tasks{flex:1;overflow-y:auto;padding:10px 9px;display:flex;flex-direction:column;gap:14px}
+/* A turn, not a card: what you asked, then what it did about it. */
+.turn{display:flex;flex-direction:column;gap:7px}
+.you{align-self:flex-end;max-width:88%;background:var(--accent);color:#fff;
+  padding:7px 11px;border-radius:11px 11px 3px 11px;font-size:12.5px;line-height:1.45}
+.bot{max-width:96%;display:flex;flex-direction:column;gap:6px}
+.say{background:var(--raise);border:1px solid var(--line);border-radius:11px 11px 11px 3px;
+  padding:9px 11px;font-size:12.5px;line-height:1.5;white-space:pre-wrap;
+  overflow-wrap:anywhere}
+.say.err{border-color:var(--bad);color:var(--bad)}
+.steps{font-size:11px;color:var(--muted);padding-left:2px;display:flex;
+  flex-direction:column;gap:2px}
+.steps .pl{display:flex;gap:6px;align-items:baseline}
+.steps .ic{width:11px;flex-shrink:0;opacity:.8}
+.pl.ok .ic{color:var(--ok)}.pl.bad .ic{color:var(--bad)}
+.pl.warn .ic{color:var(--warn)}.pl.plan .ic{color:var(--accent)}
+.pl.think{font-style:italic;opacity:.85}
+.meta2{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:10.5px;
+  color:var(--muted);padding-left:2px}
+.typing{display:inline-flex;gap:3px;align-items:center}
+.typing i{width:4px;height:4px;border-radius:50%;background:var(--accent);
+  animation:blink 1.2s infinite}
+.typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.typing i{animation:none;opacity:.6}}
 .tk{border:1px solid var(--line);border-radius:6px;background:var(--raise);padding:9px 10px;
   cursor:pointer}
 .tk.on{border-color:var(--accent)}
@@ -612,45 +636,71 @@ function drawTree(){
 
 /* ---------- agent ---------- */
 function drawTasks(){
-  if(!tasks.length){$("tasks").innerHTML='<div class="empty">No tasks yet.<br>Describe a change below.</div>';return}
-  $("tasks").innerHTML=tasks.map(t=>{
+  if(!tasks.length){
+    $("tasks").innerHTML='<div class="empty">Ask for a change.<br><br>'+
+      'The agent works on its own branch and shows you what it did.<br>'+
+      'Nothing reaches yours until you press Merge.</div>';
+    return;
+  }
+  const ICON={plan:"\u2192",ok:"\u2713",bad:"\u2717",warn:"!",think:"\u00b7",step:"\u00b7"};
+
+  /* Oldest first, like every chat: a transcript you scroll back through, not a
+     stack you read upwards. */
+  const html=[...tasks].reverse().map(t=>{
     const state=t.merged?"merged":t.discarded?"discarded":t.status;
-    const stacked=(t.stacked_above||[]).length>0;
-    const act=t.status==="completed"&&t.commits>0&&!t.merged&&!t.discarded&&!stacked;
-    const prog=(t.progress||[]).slice(-14);
-    return `<div class="tk ${current&&current.id===t.id?"on":""}" data-id="${t.id}">
-      <div class="g">${esc(t.goal)}</div>
-      <div class="m"><span class="st ${state}">${state}</span>
-        ${t.commits?`<span>${t.commits} commit${t.commits>1?"s":""}</span>`:""}
-        ${t.files.length?`<span>${t.files.length} file${t.files.length>1?"s":""}</span>`:""}</div>
-      ${t.files.length ? `<div class="files">${t.files.map(f =>
-        `<span class="chg" data-t="${t.id}" data-f="${esc(f)}" title="Show what changed in this file">${esc(f)}</span>`
-      ).join("")}</div>` : ""}
-      ${t.error?`<div class="m err">${esc(t.error)}</div>`:""}
-      ${stacked?`<div class="stk">A later task builds on this one. Merge the newest
-        task instead - it already contains this work.</div>`:""}
-      ${t.stacked_on?`<div class="stk">Built on the task below.</div>`:""}
-      ${prog.length?`<div class="prog">${prog.map(p=>`<div class="pl ${esc(p.kind)}">${esc(p.text)}</div>`).join("")}</div>`:""}
-      ${t.status==="running"?`<div class="acts">
-        <button data-a="stop" data-id="${t.id}" class="bad">Stop</button></div>`:""}
-      ${t.status!=="running"&&t.run_id?`<div class="acts">
-        ${t.commits?`<button data-a="diff" data-id="${t.id}">Review diff</button>`:""}
-        <button data-a="audit" data-id="${t.id}">Audit trail</button>
-        ${act?`<button data-a="merge" data-id="${t.id}" class="go">Merge</button>
-        <button data-a="undo" data-id="${t.id}" class="bad">Discard</button>`:""}
-      </div>`:""}
-    </div>`}).join("");
-  $("tasks").querySelectorAll(".tk").forEach(n=>n.onclick=e=>{
-    if(e.target.dataset.a||e.target.dataset.f)return;openDiff(n.dataset.id)});
-  $("tasks").querySelectorAll(".chg").forEach(n=>n.onclick=e=>{
-    e.stopPropagation();openFileDiff(n.dataset.t,n.dataset.f)});
-  $("tasks").querySelectorAll("button[data-a]").forEach(b=>b.onclick=async e=>{
+    const act=t.status==="completed"&&t.commits>0&&!t.merged&&!t.discarded;
+    const steps=(t.progress||[]).map(p=>
+      '<div class="pl '+esc(p.kind)+'"><span class="ic">'+(ICON[p.kind]||"\u00b7")+
+      "</span><span>"+esc(p.text)+"</span></div>").join("");
+
+    /* The answer is the point of the exchange. It was being computed and
+       discarded, which is what "shows no output" meant. */
+    const said=t.answer?'<div class="say">'+esc(t.answer)+"</div>":"";
+    const failed=t.error&&!t.answer?'<div class="say err">'+esc(t.error)+"</div>":"";
+    const working=t.status==="running"
+      ?'<div class="say"><span class="typing"><i></i><i></i><i></i></span> working\u2026</div>':"";
+
+    return '<div class="turn" data-id="'+t.id+'">'+
+      '<div class="you">'+esc(t.goal)+"</div>"+
+      '<div class="bot">'+
+        (steps?'<div class="steps">'+steps+"</div>":"")+
+        working+said+failed+
+        '<div class="meta2"><span class="st '+state+'">'+state+"</span>"+
+          (t.commits?"<span>"+t.commits+" commit"+(t.commits>1?"s":"")+"</span>":"")+
+          (t.files.length?"<span>"+t.files.length+" file"+
+            (t.files.length>1?"s":"")+"</span>":"")+
+        "</div>"+
+        (t.status==="running"?'<div class="acts">'+
+          '<button data-a="stop" data-id="'+t.id+'" class="bad">Stop</button></div>':"")+
+        (t.status!=="running"&&t.run_id?'<div class="acts">'+
+          (t.commits?'<button data-a="diff" data-id="'+t.id+'">Review diff</button>':"")+
+          '<button data-a="audit" data-id="'+t.id+'">Audit trail</button>'+
+          (act?'<button data-a="merge" data-id="'+t.id+'" class="go">Merge</button>'+
+               '<button data-a="undo" data-id="'+t.id+'" class="bad">Discard</button>':"")+
+          "</div>":"")+
+      "</div></div>";
+  }).join("");
+
+  const pane=$("tasks");
+  const wasNearBottom=pane.scrollHeight-pane.scrollTop-pane.clientHeight<80;
+  pane.innerHTML=html;
+  /* Follow the conversation only if the reader is already at the bottom -
+     yanking the view while someone is reading an earlier turn is worse than
+     not following at all. */
+  if(wasNearBottom)pane.scrollTop=pane.scrollHeight;
+
+  pane.querySelectorAll(".turn").forEach(n=>n.onclick=e=>{
+    if(e.target.dataset.a)return;
+    const t=tasks.find(x=>x.id===n.dataset.id);
+    if(t&&t.commits)openDiff(n.dataset.id);
+  });
+  pane.querySelectorAll("button[data-a]").forEach(b=>b.onclick=async e=>{
     e.stopPropagation();const id=b.dataset.id,a=b.dataset.a;
     if(a==="diff")return openDiff(id);
     if(a==="audit")return openAudit(id);
     if(a==="stop"){
       b.disabled=true;
-      try{await api("/code/tasks/"+id+"/cancel",{method:"POST"});toast("Stopping...");await refresh();}
+      try{await api("/code/tasks/"+id+"/cancel",{method:"POST"});toast("Stopping\u2026");await refresh();}
       catch(err){toast(err.message,"bad");b.disabled=false}
       return;
     }
@@ -658,7 +708,8 @@ function drawTasks(){
     b.disabled=true;
     try{const r=await api("/code/tasks/"+id+"/"+(a==="merge"?"accept":"undo"),{method:"POST"});
         toast(a==="merge"?("Merged into "+r.into):"Discarded","ok");await refresh();}
-    catch(err){toast(err.message,"bad");b.disabled=false}});
+    catch(err){toast(err.message,"bad");b.disabled=false}
+  });
 }
 
 async function refresh(){
@@ -700,7 +751,7 @@ async function refresh(){
   try{tasks=await api("/code/tasks");
       if(current)current=tasks.find(t=>t.id===current.id)||current;drawTasks()}catch(e){}
   if(timer)clearTimeout(timer);
-  if(status.busy)timer=setTimeout(refresh,1200);
+  if(status.busy)timer=setTimeout(refresh,700);
 }
 
 /* ---------- command palette ---------- */

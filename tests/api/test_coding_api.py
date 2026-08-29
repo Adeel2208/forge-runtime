@@ -505,3 +505,50 @@ def test_status_survives_a_repository_with_no_commits(tmp_path) -> None:
 
 def test_status_reports_commits_where_there_are_some(tmp_path) -> None:
     assert CodingService(_repo(tmp_path)).status()["has_commits"] is True
+
+
+# -- the conversation ------------------------------------------------------
+
+
+def test_a_task_carries_the_agent_answer(tmp_path) -> None:
+    """The answer is the point of the exchange, and it was being computed and
+    discarded: the panel showed a status, a commit count and a file list, and
+    nothing the agent actually said."""
+    service = CodingService(_repo(tmp_path))
+    task = _branch_with_change(service, "forge/code_ans")
+    task.answer = "Added a guard for division by zero."
+
+    assert "answer" in task.to_dict()
+    assert task.to_dict()["answer"] == "Added a guard for division by zero."
+
+
+def test_the_rationale_reaches_the_transcript(tmp_path) -> None:
+    """A tool name alone is a progress bar. The rationale is the model
+    explaining itself, which is most of what makes an agent readable."""
+    from forge.core.enums import EventType
+
+    service = CodingService(_repo(tmp_path))
+    task = Task(id="t", goal="g")
+    hook = service._on_step(task)
+
+    hook(EventType.PROPOSAL_RECEIVED,
+         {"tool": "read_file", "rationale_summary": "Find the divide function."})
+    hook(EventType.PROPOSAL_RECEIVED,
+         {"tool": None, "rationale_summary": "The guard is in place."})
+
+    kinds = [p["kind"] for p in task.progress]
+    texts = [p["text"] for p in task.progress]
+
+    assert kinds == ["plan", "think"]
+    assert "read_file - Find the divide function." in texts[0]
+    assert texts[1] == "The guard is in place."
+
+
+def test_a_proposal_without_a_rationale_still_reports_the_tool(tmp_path) -> None:
+    from forge.core.enums import EventType
+
+    service = CodingService(_repo(tmp_path))
+    task = Task(id="t", goal="g")
+    service._on_step(task)(EventType.PROPOSAL_RECEIVED, {"tool": "edit_file"})
+
+    assert task.progress[0]["text"] == "edit_file"

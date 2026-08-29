@@ -74,6 +74,10 @@ class Task:
     commits: int = 0
     files: list[str] = field(default_factory=list)
     diff_stat: str = ""
+    answer: str = ""
+    """What the agent said it did. The point of the whole exchange, and it
+    was being computed and discarded."""
+
     base_ref: str = ""
     stacked_on: str | None = None
     """The task this one was built on top of, when it started from that
@@ -91,6 +95,7 @@ class Task:
             "id": self.id, "goal": self.goal, "status": self.status,
             "run_id": self.run_id, "branch": self.branch, "commits": self.commits,
             "files": self.files, "diff_stat": self.diff_stat, "error": self.error,
+            "answer": self.answer,
             "base_ref": self.base_ref, "progress": self.progress,
             "stacked_on": self.stacked_on,
             "merged": self.merged, "discarded": self.discarded,
@@ -389,8 +394,14 @@ class CodingService:
                         task, "bad",
                         f"step {step} {tool or 'a tool'} failed: {detail}".strip(),
                     )
-            elif name == "PROPOSAL_RECEIVED" and tool:
-                self._note(task, "plan", f"proposes {tool}")
+            elif name == "PROPOSAL_RECEIVED":
+                # The rationale is the model explaining itself, which is most of
+                # what makes a coding agent readable rather than a progress bar.
+                why = str(payload.get("rationale_summary") or "").strip()
+                if tool:
+                    self._note(task, "plan", f"{tool}" + (f" - {why}" if why else ""))
+                elif why:
+                    self._note(task, "think", why)
             elif name == "EFFECT_OBSERVED" and tool:
                 self._note(task, "ok" if payload.get("ok") else "bad",
                            f"{'ran' if payload.get('ok') else 'failed'} {tool}")
@@ -413,6 +424,7 @@ class CodingService:
             task.files = list(result.files_touched)
             task.diff_stat = result.diff_stat
             task.base_ref = result.base_ref
+            task.answer = result.run.answer or ""
             task.status = "completed" if result.ok else "failed"
             if not result.ok:
                 task.error = result.run.error
