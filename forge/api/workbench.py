@@ -188,6 +188,13 @@ mark{background:var(--gold);color:#000}
 .pl.ok .ic{color:var(--ok)}.pl.bad .ic{color:var(--bad)}
 .pl.warn .ic{color:var(--warn)}.pl.plan .ic{color:var(--accent)}
 .pl.think{font-style:italic;opacity:.85}
+.memchip{font-size:9.5px;color:var(--muted);border:1px solid var(--line);
+  border-radius:8px;padding:1px 6px;white-space:nowrap}
+.memchip:empty{display:none}
+.turnacts{display:flex;gap:5px;margin-top:2px;opacity:0;transition:opacity .12s}
+.turn:hover .turnacts,.turn:focus-within .turnacts{opacity:1}
+@media (prefers-reduced-motion:reduce){.turnacts{transition:none}}
+.turnacts button{font-size:10.5px;padding:2px 7px;color:var(--muted)}
 .meta2{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:10.5px;
   color:var(--muted);padding-left:2px}
 .typing{display:inline-flex;gap:3px;align-items:center}
@@ -308,7 +315,13 @@ mark{background:var(--gold);color:#000}
     <div class="gut" id="gr"></div>
 
     <div class="col" id="right">
-      <div class="hd"><span class="grow">Agent</span><span id="busy"></span></div>
+      <div class="hd">
+        <span class="grow">Agent</span>
+        <span id="memory" class="memchip" title="Earlier turns the agent can still see"></span>
+        <span id="busy"></span>
+        <button id="newchat" class="iconbtn" title="New chat (Ctrl+Shift+N)"
+                aria-label="Start a new chat">New</button>
+      </div>
       <div id="tasks" role="log" aria-label="Agent tasks" aria-live="polite"></div>
       <div id="ask">
         <textarea id="goal" rows="3"
@@ -665,6 +678,10 @@ function drawTasks(){
       '<div class="bot">'+
         (steps?'<div class="steps">'+steps+"</div>":"")+
         working+said+failed+
+        '<div class="turnacts">'+
+          '<button data-a="retry" data-id="'+t.id+'" title="Ask this again">Retry</button>'+
+          (t.answer?'<button data-a="copy" data-id="'+t.id+'">Copy</button>':"")+
+        "</div>"+
         '<div class="meta2"><span class="st '+state+'">'+state+"</span>"+
           (t.commits?"<span>"+t.commits+" commit"+(t.commits>1?"s":"")+"</span>":"")+
           (t.files.length?"<span>"+t.files.length+" file"+
@@ -698,6 +715,24 @@ function drawTasks(){
     e.stopPropagation();const id=b.dataset.id,a=b.dataset.a;
     if(a==="diff")return openDiff(id);
     if(a==="audit")return openAudit(id);
+    if(a==="copy"){
+      const turn=tasks.find(x=>x.id===id);
+      navigator.clipboard.writeText(turn.answer||"").then(
+        ()=>toast("Copied","ok"),()=>toast("Could not copy","bad"));
+      return;
+    }
+    if(a==="retry"){
+      const turn=tasks.find(x=>x.id===id);
+      if(!turn)return;
+      // Put it back in the box rather than firing it off: a retry usually
+      // wants a word changed, and re-running the identical prompt against the
+      // same model is the least likely thing to help.
+      $("goal").value=turn.goal;
+      $("goal").focus();
+      $("goal").setSelectionRange(turn.goal.length,turn.goal.length);
+      toast("Edit it and send again");
+      return;
+    }
     if(a==="stop"){
       b.disabled=true;
       try{await api("/code/tasks/"+id+"/cancel",{method:"POST"});toast("Stopping\u2026");await refresh();}
@@ -768,6 +803,7 @@ const COMMANDS=[
   {n:"Stop the running task",run:()=>{const r=tasks.find(x=>x.status==="running");
      if(r)api("/code/tasks/"+r.id+"/cancel",{method:"POST"}).then(refresh);
      else toast("Nothing is running")}},
+  {n:"New chat",k:"Ctrl+Shift+N",run:newChat},
   {n:"Toggle explorer",k:"Ctrl+B",run:()=>togglePane("left")},
   {n:"Toggle agent panel",k:"Ctrl+J",run:()=>togglePane("right")},
   {n:"Refresh",k:"Ctrl+R",run:refresh},
@@ -833,6 +869,7 @@ document.addEventListener("keydown",e=>{
   else if(mod&&e.key.toLowerCase()==="w"){e.preventDefault();active&&closeTab(active)}
   else if(mod&&e.key.toLowerCase()==="b"){e.preventDefault();togglePane("left")}
   else if(mod&&e.key.toLowerCase()==="j"){e.preventDefault();togglePane("right")}
+  else if(mod&&e.shiftKey&&e.key.toLowerCase()==="n"){e.preventDefault();newChat()}
   else if(mod&&e.key==="Enter"){e.preventDefault();$("send").click()}
 });
 $("cmd").onclick=()=>palette("cmd");
@@ -944,6 +981,22 @@ function applyPanes(){
   $("tright").setAttribute("aria-pressed",String(!!store.get("right",true)));
 }
 function togglePane(which){store.set(which,!store.get(which,true));applyPanes()}
+async function newChat(){
+  if(tasks.length&&!confirm(
+      "Start a new chat? The transcript and what the agent remembers "+
+      "are cleared. Branches from earlier tasks are left alone."))return;
+  try{
+    const r=await api("/code/chat/reset",{method:"POST"});
+    tabs=tabs.filter(x=>!x.id.startsWith("d:")&&!x.id.startsWith("au:"));
+    active=tabs.length?tabs[tabs.length-1].id:null;
+    current=null;
+    toast(r.branches_left_alone
+      ? "New chat - "+r.branches_left_alone+" unmerged branch(es) still in git"
+      : "New chat","ok");
+    await refresh();render();
+  }catch(e){toast(e.message,"bad")}
+}
+$("newchat").onclick=newChat;
 $("tleft").onclick=()=>togglePane("left");
 $("tright").onclick=()=>togglePane("right");
 applyPanes();

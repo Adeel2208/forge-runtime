@@ -189,6 +189,9 @@ class CodingService:
             "model": model,
             "policy": self.agent._policy.version,
             "busy": self.busy,
+            # Shown in the panel: a user who cannot see that context is
+            # being carried has no way to know why a follow-up worked.
+            "remembered": len(self.conversation),
         }
 
     async def models(self) -> dict[str, Any]:
@@ -457,6 +460,28 @@ class CodingService:
         except Exception as exc:
             task.status, task.error = "failed", f"{type(exc).__name__}: {exc}"
 
+    def reset(self) -> dict[str, Any]:
+        """Start a new conversation.
+
+        Clears the transcript and the memory behind it, so the next task is
+        read on its own terms. Branches are deliberately left alone: they hold
+        real commits, and silently deleting somebody's work because they wanted
+        a clean chat would be the worst kind of surprise. They stay reachable
+        through git, and the reply says how many.
+        """
+        if self.busy:
+            raise HTTPException(
+                status_code=409, detail="a task is running; stop it first"
+            )
+        kept = sum(
+            1 for t in self.tasks.values()
+            if t.commits and not t.merged and not t.discarded
+        )
+        self.tasks.clear()
+        self.order.clear()
+        self.conversation.turns.clear()
+        return {"cleared": True, "branches_left_alone": kept}
+
     def cancel(self, task_id: str) -> dict[str, Any]:
         """Stop a running task.
 
@@ -696,6 +721,10 @@ def build_coding_router(
     @router.get("/tasks/{task_id}/diff/file")
     async def task_file_diff(task_id: str, path: str = Query(min_length=1)) -> dict[str, Any]:
         return {"diff": service.file_diff(task_id, path)}
+
+    @router.post("/chat/reset")
+    async def reset() -> dict[str, Any]:
+        return service.reset()
 
     @router.post("/tasks/{task_id}/cancel")
     async def cancel(task_id: str) -> dict[str, Any]:

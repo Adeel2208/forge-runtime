@@ -552,3 +552,56 @@ def test_a_proposal_without_a_rationale_still_reports_the_tool(tmp_path) -> None
     service._on_step(task)(EventType.PROPOSAL_RECEIVED, {"tool": "edit_file"})
 
     assert task.progress[0]["text"] == "edit_file"
+
+
+def test_a_new_chat_clears_the_transcript_and_the_memory(tmp_path) -> None:
+    from forge.coding.memory import Turn
+
+    service = CodingService(_repo(tmp_path))
+    _branch_with_change(service, "forge/code_n1")
+    service.conversation.record(Turn(goal="earlier", status="completed"))
+
+    result = service.reset()
+
+    assert result["cleared"] is True
+    assert service.tasks == {} and service.order == []
+    assert len(service.conversation) == 0
+
+
+def test_a_new_chat_does_not_delete_anyone_s_branches(tmp_path) -> None:
+    """Branches hold real commits. Silently deleting somebody's work because
+    they wanted a clean chat would be the worst kind of surprise."""
+    service = CodingService(_repo(tmp_path))
+    _branch_with_change(service, "forge/code_keep")
+
+    result = service.reset()
+
+    assert result["branches_left_alone"] == 1
+    assert "forge/code_keep" in service.agent.repo.run("branch")
+
+
+def test_a_new_chat_is_refused_while_a_task_runs(tmp_path) -> None:
+    service = CodingService(_repo(tmp_path))
+    _start(service, "something")
+    service.tasks[service.order[0]].status = "running"
+
+    class _Busy:
+        def done(self) -> bool:
+            return False
+
+    service._running = _Busy()  # type: ignore[assignment]
+    with pytest.raises(HTTPException) as caught:
+        service.reset()
+    assert caught.value.status_code == 409
+
+
+def test_status_reports_how_much_is_remembered(tmp_path) -> None:
+    """A user who cannot see that context is carried has no way to know why a
+    follow-up like "now do the same for modulo" worked."""
+    from forge.coding.memory import Turn
+
+    service = CodingService(_repo(tmp_path))
+    assert service.status()["remembered"] == 0
+
+    service.conversation.record(Turn(goal="first", status="completed"))
+    assert service.status()["remembered"] == 1
